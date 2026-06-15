@@ -1,0 +1,6 @@
+{
+  "name": "OmniBridge AI",
+  "description": "멀티모달 학습 노트 앱 프로토타입",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

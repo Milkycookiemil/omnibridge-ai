@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-base: #0B1020;
+  --color-navy-dark: #121A2E;
+  --color-glass: rgba(255, 255, 255, 0.06);
+  --color-glass-border: rgba(255, 255, 255, 0.12);
+  
+  --color-accent-blue: #3B82F6;
+  --color-accent-cyan: #22D3EE;
+  --color-accent-violet: #8B5CF6;
+  --color-accent-amber: #F59E0B;
+  
+  --color-text-primary: #E6EAF2;
+  --color-text-muted: #8A93A6;
+  --color-ok-green: #34D399;
+  
+  --font-sans: "Pretendard", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background: linear-gradient(to bottom, var(--color-navy-base), var(--color-navy-dark));
+  background-attachment: fixed;
+  color: var(--color-text-primary);
+  min-height: 100vh;
+  margin: 0;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+.glass-panel {
+  background: var(--color-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 1rem;
+}
+
+.text-gradient-sync {
+  background: linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.bg-gradient-sync {
+  background: linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-cyan));
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.2);
+}
