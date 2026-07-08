@@ -1,9 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ViewState } from '../types';
 import { dummyData } from '../data';
-import { Play, Sparkles, Plus, RefreshCw, FileText, AlertTriangle, Mic, FilePlus, File, ChevronLeft, X } from 'lucide-react';
+import { Play, Sparkles, Plus, FileText, AlertTriangle, Mic, FilePlus, File, ChevronLeft, X, Trash2, PenLine } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils';
+import { listNotes, createNote, deleteNote, type NoteMeta, type PaperStyle } from '../lib/notesStore';
 
 interface DashboardViewProps {
   onNavigate: (view: ViewState, context?: any) => void;
@@ -14,11 +14,43 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
   const [selectedNoteType, setSelectedNoteType] = useState<'blank' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 실제 저장된 노트 목록 (IndexedDB)
+  const [notes, setNotes] = useState<NoteMeta[]>([]);
+
+  useEffect(() => {
+    listNotes().then(setNotes);
+  }, []);
+
   const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       onNavigate('live_note', { style: 'pdf', fileName: file.name, file: file });
     }
+  };
+
+  // 새 손필기 노트를 만들고 바로 편집 화면으로 진입
+  const handleCreateNote = async (style: PaperStyle) => {
+    const note = await createNote(style);
+    setIsNewNoteModalOpen(false);
+    onNavigate('live_note', { noteId: note.id, style });
+  };
+
+  const handleDeleteNote = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    await deleteNote(id);
+    setNotes(await listNotes());
+  };
+
+  const formatDate = (ts: number) => {
+    const d = new Date(ts);
+    const today = new Date();
+    const isSameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (isSameDay(d, today)) return '오늘';
+    if (isSameDay(d, yesterday)) return '어제';
+    return d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
   };
 
   return (
@@ -117,33 +149,53 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
 
       <div>
         <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-slate-800">
-          <FileText className="w-5 h-5 text-slate-400" />최근 노트
+          <FileText className="w-5 h-5 text-slate-400" />내 노트
         </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {dummyData.recentNotes.map((note, idx) => {
-            const maskPII = (text: string) => {
-              if (!text) return text;
-              let masked = text.replace(/01[016789]-?\d{3,4}-?\d{4}/g, "[개인정보 보호 마스킹]");
-              masked = masked.replace(/\d{2}[0-1]\d[0-3]\d-?[1-4]\d{6}/g, "[개인정보 보호 마스킹]");
-              return masked;
-            };
-            return (
-              <motion.div 
+
+        {notes.length === 0 ? (
+          <div className="bg-white border border-dashed border-slate-300 rounded-2xl py-14 flex flex-col items-center justify-center text-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center">
+              <PenLine className="w-6 h-6 text-blue-500" />
+            </div>
+            <p className="text-sm text-slate-500 font-medium">아직 저장된 노트가 없어요.</p>
+            <button
+              onClick={() => { setIsNewNoteModalOpen(true); setSelectedNoteType('blank'); }}
+              className="mt-1 bg-gradient-sync text-white flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-xl shadow-sm hover:opacity-90 transition-opacity"
+            >
+              <Plus className="w-4 h-4" /> 첫 노트 만들기
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {notes.map((note, idx) => (
+              <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 + idx * 0.1 }}
-                key={idx} 
-                className="bg-white border border-slate-200 rounded-2xl p-4 cursor-pointer hover:shadow-md transition-shadow group flex flex-col"
+                transition={{ delay: Math.min(idx * 0.05, 0.3) }}
+                key={note.id}
+                onClick={() => onNavigate('live_note', { noteId: note.id, style: note.style })}
+                className="bg-white border border-slate-200 rounded-2xl p-4 cursor-pointer hover:shadow-md transition-shadow group flex flex-col relative"
               >
-                <div className="w-full h-20 bg-slate-50 border border-slate-100 rounded-lg mb-3 flex items-center justify-center group-hover:bg-slate-100 transition-colors p-2 overflow-hidden text-xs text-slate-500">
-                  {note.snippet ? maskPII(note.snippet) : <FileText className="w-8 h-8 text-slate-300 group-hover:text-slate-400 transition-colors" />}
+                <button
+                  onClick={(e) => handleDeleteNote(e, note.id)}
+                  className="absolute top-3 right-3 z-10 w-7 h-7 rounded-lg bg-white/80 border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="노트 삭제"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                <div className="w-full h-24 bg-slate-50 border border-slate-100 rounded-lg mb-3 flex items-center justify-center group-hover:bg-slate-100 transition-colors overflow-hidden">
+                  {note.thumbnail ? (
+                    <img src={note.thumbnail} alt={note.title} className="w-full h-full object-contain" draggable={false} />
+                  ) : (
+                    <PenLine className="w-8 h-8 text-slate-300 group-hover:text-slate-400 transition-colors" />
+                  )}
                 </div>
                 <h4 className="font-medium text-sm truncate mb-1 text-slate-800">{note.title}</h4>
-                <p className="text-xs text-slate-400">{note.date}</p>
+                <p className="text-xs text-slate-400">{formatDate(note.updatedAt)}</p>
               </motion.div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Modal */}
@@ -209,21 +261,21 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                     <ChevronLeft className="w-4 h-4"/> 뒤로 가기
                   </button>
                   <div className="grid grid-cols-3 gap-3">
-                    <button 
-                      onClick={() => { onNavigate('live_note', { style: 'blank' }); setIsNewNoteModalOpen(false); }} 
+                    <button
+                      onClick={() => handleCreateNote('blank')}
                       className="aspect-square rounded-xl border border-slate-200 bg-white hover:bg-slate-50 flex flex-col items-center justify-center gap-2 transition-colors relative overflow-hidden group shadow-sm"
                     >
                       <span className="font-medium text-sm relative z-10 text-slate-600 group-hover:text-slate-900 transition-colors">무선</span>
                     </button>
-                    <button 
-                      onClick={() => { onNavigate('live_note', { style: 'ruled' }); setIsNewNoteModalOpen(false); }} 
+                    <button
+                      onClick={() => handleCreateNote('ruled')}
                       className="aspect-square rounded-xl border border-slate-200 bg-white hover:bg-slate-50 flex flex-col items-center justify-center gap-2 transition-colors relative overflow-hidden group shadow-sm"
                     >
                       <div className="absolute inset-0 opacity-[0.05] pointer-events-none group-hover:opacity-10 transition-opacity" style={{ backgroundImage: 'linear-gradient(transparent 85%, black 85%)', backgroundSize: '100% 20%' }}></div>
                       <span className="font-medium text-sm relative z-10 bg-white/90 px-2 py-0.5 rounded text-slate-600 group-hover:text-slate-900 transition-colors shadow-sm border border-slate-100">유선</span>
                     </button>
-                    <button 
-                      onClick={() => { onNavigate('live_note', { style: 'oxford' }); setIsNewNoteModalOpen(false); }} 
+                    <button
+                      onClick={() => handleCreateNote('oxford')}
                       className="aspect-square rounded-xl border border-slate-200 bg-white hover:bg-slate-50 flex flex-col items-center justify-center gap-2 transition-colors relative overflow-hidden group shadow-sm"
                     >
                       <div className="absolute inset-0 opacity-[0.05] pointer-events-none group-hover:opacity-10 transition-opacity" style={{ backgroundImage: 'linear-gradient(transparent 85%, black 85%), linear-gradient(90deg, transparent 15%, #ef4444 15%, #ef4444 18%, transparent 18%)', backgroundSize: '100% 20%, 100% 100%' }}></div>

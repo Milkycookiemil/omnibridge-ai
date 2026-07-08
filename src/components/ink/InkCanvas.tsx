@@ -24,6 +24,8 @@ export interface InkCanvasHandle {
   clear: () => void;
   exportPng: () => string | null;        // 합성 결과 (A-3 슬라이드 저장용)
   getCanvas: () => HTMLCanvasElement | null;
+  exportStrokes: () => InkStroke[];      // 노트 영속 저장용 스냅샷
+  loadStrokes: (strokes: InkStroke[]) => void; // 저장된 노트 불러오기
 }
 
 interface InkCanvasProps {
@@ -201,6 +203,26 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     },
     exportPng: () => canvasRef.current?.toDataURL('image/png') ?? null,
     getCanvas: () => canvasRef.current,
+    // 스트로크 모델 스냅샷(깊은 복사) — 저장 후 외부 변형이 캔버스에 영향 없게.
+    exportStrokes: () =>
+      [...strokesRef.current.values()].map((st) => ({
+        ...st,
+        segs: st.segs.map((s) => ({ from: { ...s.from }, to: { ...s.to }, width: s.width })),
+      })),
+    // 저장된 스트로크로 캔버스 복원: 초기화 → 레이어 보장 → 모델 주입 → 재렌더.
+    loadStrokes: (strokes: InkStroke[]) => {
+      strokesRef.current.clear();
+      layerCanvasesRef.current.forEach((c) => c.getContext('2d')?.clearRect(0, 0, c.width, c.height));
+      for (const st of strokes) {
+        ensureLayer(st.layerId);
+        strokesRef.current.set(st.id, {
+          ...st,
+          segs: st.segs.map((s) => ({ from: { ...s.from }, to: { ...s.to }, width: s.width })),
+        });
+      }
+      layersRef.current.forEach((l) => rebuildLayer(l.id));
+      composite();
+    },
   }));
 
   // 크기 변경 시 오프스크린 재생성 + 모델에서 재렌더 (내용 유실 없음)

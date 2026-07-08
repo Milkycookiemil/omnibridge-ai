@@ -14,8 +14,9 @@ import { TranscriptPanel } from './TranscriptPanel';
 import { usePenState } from '../hooks/usePenState';
 import { useTranscription } from '../hooks/useTranscription';
 
-import { useSyncEngine, onRemoteStroke, getAllStrokes } from '../lib/syncEngine';
+import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
+import { getNote, saveNoteStrokes } from '../lib/notesStore';
 import { usePreferences } from '../lib/preferences';
 import { useDeviceMode } from '../lib/deviceMode';
 
@@ -28,6 +29,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const paperStyle = navContext?.style || 'blank';
   const fileName = navContext?.fileName;
   const fileDetails = navContext?.file;
+  // 저장된 노트를 열었을 때의 식별자. 없으면(빠른 녹음/PDF/캡쳐 등) 비영속.
+  const noteId: string | undefined = navContext?.noteId;
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
@@ -167,9 +170,57 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     }
   };
 
-  // 로컬 잉크 델타(세그먼트/획 삭제) → 실시간 릴레이(Supabase Realtime broadcast)
+  // --- 노트 자동 저장 (IndexedDB) ---
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 대시보드 카드용 축소 썸네일 생성
+  const makeThumb = (canvas: HTMLCanvasElement | null): string | undefined => {
+    if (!canvas) return undefined;
+    try {
+      const tw = 240;
+      const th = Math.max(1, Math.round((canvas.height / canvas.width) * tw));
+      const off = document.createElement('canvas');
+      off.width = tw;
+      off.height = th;
+      const ctx = off.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, tw, th);
+      ctx.drawImage(canvas, 0, 0, tw, th);
+      return off.toDataURL('image/png');
+    } catch {
+      return undefined;
+    }
+  };
+
+  const doSave = async () => {
+    const id = navContext?.noteId as string | undefined;
+    if (!id || !inkRef.current) return;
+    const strokes = inkRef.current.exportStrokes();
+    const thumb = makeThumb(inkRef.current.getCanvas());
+    await saveNoteStrokes(id, strokes, thumb);
+  };
+  const doSaveRef = useRef(doSave);
+  doSaveRef.current = doSave;
+
+  const scheduleSave = () => {
+    if (!navContext?.noteId) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => void doSaveRef.current(), 1000);
+  };
+
+  // 화면을 떠날 때 마지막 상태를 확실히 저장 (디바운스 잔여분 flush)
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      void doSaveRef.current();
+    };
+  }, []);
+
+  // 로컬 잉크 델타(세그먼트/획 삭제) → 실시간 릴레이 + 노트 자동 저장 예약
   const handleLocalDelta = (delta: InkDelta) => {
     pushDelta(delta);
+    scheduleSave();
   };
 
   // 원격 기기에서 들어온 델타(필기·삭제)를 실시간으로 캔버스에 반영
@@ -178,12 +229,21 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     return () => { unsub(); };
   }, []);
 
-  // 캔버스 (재)마운트 시 CRDT에 누적된 모든 이벤트를 순서대로 재적용.
-  // 삭제 연산까지 포함해 동일 상태 재현 → 기기 전환·늦은 합류에도 필기 유실 0.
+  // 캔버스 (재)마운트 시 해당 노트의 저장된 스트로크를 불러와 복원.
+  // noteId가 없으면(빠른 녹음/임시) 빈 캔버스로 시작한다.
   useEffect(() => {
-    inkRef.current?.clear();
-    getAllStrokes().forEach((delta) => inkRef.current?.applyDelta(delta));
-  }, [deviceMode, paperStyle]);
+    let cancelled = false;
+    if (!inkRef.current) return;
+    inkRef.current.clear();
+    if (noteId) {
+      getNote(noteId).then((note) => {
+        if (!cancelled && note && inkRef.current) inkRef.current.loadStrokes(note.strokes);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceMode, paperStyle, noteId]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, '0');
