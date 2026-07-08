@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { ShieldCheck, Cloud, Zap, Loader2 } from 'lucide-react';
-import { googleSignIn } from '../../lib/auth';
+import { ShieldCheck, Cloud, Zap, Loader2, Mail, Lock } from 'lucide-react';
+import { googleSignIn, emailSignIn, emailSignUp, authErrorMessage } from '../../lib/auth';
 
 interface LoginViewProps {
-  onAuthenticated: () => void;
+  // 게스트로 둘러보기 (실계정 없이 진입). 실계정 로그인/회원가입 성공은
+  // App의 onAuthStateChanged 리스너가 자동으로 화면을 전환한다.
+  onGuest: () => void;
 }
 
-// Inline Google "G" mark so login button reads as an official 1-Tap entry point.
+// Inline Google "G" mark so login button reads as an official entry point.
 function GoogleMark() {
   return (
     <svg className="w-5 h-5" viewBox="0 0 48 48" aria-hidden="true">
@@ -25,29 +27,56 @@ const TRUST_SIGNALS = [
   { icon: Zap, color: 'text-violet-500', bg: 'bg-violet-50', title: '온디바이스 AI', desc: 'NPU 기반 실시간 요약. 녹음은 내 기기 안에서만 처리됩니다.' },
 ];
 
-export function LoginView({ onAuthenticated }: LoginViewProps) {
+type Mode = 'login' | 'signup';
+
+export function LoginView({ onGuest }: LoginViewProps) {
+  const [mode, setMode] = useState<Mode>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleGoogleLogin = async () => {
     setError(null);
+    setGoogleLoading(true);
+    try {
+      // 리다이렉트로 구글로 이동 → 복귀 후 App 리스너가 처리. (팝업 차단 무관)
+      await googleSignIn();
+    } catch (e: any) {
+      const msg = authErrorMessage(e?.code);
+      if (msg) setError(msg);
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleEmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!email.trim()) return setError('이메일을 입력해 주세요.');
+    if (password.length < 6) return setError('비밀번호는 6자 이상이어야 합니다.');
+
     setLoading(true);
     try {
-      const result = await googleSignIn();
-      if (result?.accessToken) {
-        onAuthenticated();
+      // 성공 시 App의 onAuthStateChanged가 온보딩/앱으로 자동 전환한다.
+      if (mode === 'signup') {
+        await emailSignUp(email, password);
       } else {
-        setError('로그인 정보를 가져오지 못했습니다. 다시 시도해주세요.');
+        await emailSignIn(email, password);
       }
-    } catch (e: any) {
-      // popup-closed-by-user 등은 조용히 무시, 그 외엔 안내
-      if (e?.code !== 'auth/popup-closed-by-user' && e?.code !== 'auth/cancelled-popup-request') {
-        setError('로그인에 실패했습니다. 게스트로 둘러보기를 이용해보세요.');
-      }
-    } finally {
+    } catch (err: any) {
+      setError(authErrorMessage(err?.code));
       setLoading(false);
     }
   };
+
+  const toggleMode = () => {
+    setError(null);
+    setMode((m) => (m === 'login' ? 'signup' : 'login'));
+  };
+
+  const busy = loading || googleLoading;
 
   return (
     <div className="h-screen w-full flex flex-col md:flex-row bg-[#F4F5F7] text-slate-800 overflow-hidden">
@@ -98,29 +127,61 @@ export function LoginView({ onAuthenticated }: LoginViewProps) {
       </div>
 
       {/* Right: Auth Actions */}
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex items-center justify-center p-6 overflow-y-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-sm"
+          className="w-full max-w-sm py-8"
         >
           <div className="md:hidden flex items-center gap-2 font-bold text-lg tracking-tight mb-8 text-slate-800">
             <span className="text-blue-500 text-xl">✦</span> OmniBridge AI
           </div>
 
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 mb-2">시작하기</h2>
-          <p className="text-slate-500 text-sm font-medium mb-8">
-            복잡한 회원가입 없이, 구글 계정으로 1초 만에 시작하세요.
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900 mb-2">
+            {mode === 'login' ? '로그인' : '회원가입'}
+          </h2>
+          <p className="text-slate-500 text-sm font-medium mb-6">
+            {mode === 'login'
+              ? '이메일 또는 구글 계정으로 시작하세요.'
+              : '이메일로 새 계정을 만들어 시작하세요.'}
           </p>
 
-          <button
-            onClick={handleGoogleLogin}
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 shadow-sm hover:bg-slate-50 hover:border-slate-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <GoogleMark />}
-            {loading ? '연결 중...' : 'Google 계정으로 1-Tap 시작'}
-          </button>
+          {/* 이메일 / 비밀번호 폼 */}
+          <form onSubmit={handleEmailSubmit} className="space-y-3">
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="이메일"
+                autoComplete="email"
+                disabled={busy}
+                className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-300 bg-white text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition disabled:opacity-60"
+              />
+            </div>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="비밀번호 (6자 이상)"
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                disabled={busy}
+                className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-300 bg-white text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition disabled:opacity-60"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-bold shadow-lg shadow-blue-500/20 hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {loading && <Loader2 className="w-5 h-5 animate-spin" />}
+              {loading ? '처리 중...' : mode === 'login' ? '로그인' : '회원가입'}
+            </button>
+          </form>
 
           {error && (
             <motion.p
@@ -132,6 +193,19 @@ export function LoginView({ onAuthenticated }: LoginViewProps) {
             </motion.p>
           )}
 
+          {/* 로그인 ↔ 회원가입 전환 */}
+          <p className="mt-4 text-center text-sm text-slate-500">
+            {mode === 'login' ? '아직 계정이 없으신가요?' : '이미 계정이 있으신가요?'}{' '}
+            <button
+              type="button"
+              onClick={toggleMode}
+              disabled={busy}
+              className="font-bold text-blue-600 hover:text-blue-700 disabled:opacity-60"
+            >
+              {mode === 'login' ? '회원가입' : '로그인'}
+            </button>
+          </p>
+
           <div className="flex items-center gap-3 my-6">
             <div className="flex-1 h-px bg-slate-200" />
             <span className="text-xs text-slate-400 font-medium">또는</span>
@@ -139,8 +213,18 @@ export function LoginView({ onAuthenticated }: LoginViewProps) {
           </div>
 
           <button
-            onClick={onAuthenticated}
-            className="w-full py-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-600 text-sm transition-colors"
+            onClick={handleGoogleLogin}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 shadow-sm hover:bg-slate-50 hover:border-slate-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {googleLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <GoogleMark />}
+            {googleLoading ? '구글로 이동 중...' : 'Google 계정으로 시작'}
+          </button>
+
+          <button
+            onClick={onGuest}
+            disabled={busy}
+            className="mt-3 w-full py-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-600 text-sm transition-colors disabled:opacity-60"
           >
             게스트로 둘러보기
           </button>

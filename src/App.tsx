@@ -17,16 +17,52 @@ import { initAuth } from './lib/auth';
 import { LoginView } from './components/onboarding/LoginView';
 import { OnboardingPermissions } from './components/onboarding/OnboardingPermissions';
 
-type FlowStage = 'login' | 'onboarding' | 'app';
+type FlowStage = 'loading' | 'login' | 'onboarding' | 'app';
+
+// localStorage 키: 온보딩 1회 완료 여부 / 게스트 진입 여부(자동 로그인 유지용)
+const ONBOARDING_DONE_KEY = 'ob_onboarding_done';
+const GUEST_KEY = 'ob_guest';
+
+const isOnboardingDone = () => localStorage.getItem(ONBOARDING_DONE_KEY) === '1';
 
 export default function App() {
-  const [stage, setStage] = useState<FlowStage>('login');
+  // 인증 상태가 확정될 때까지 'loading'으로 시작 → 깜빡임 없이 자동 로그인 판단
+  const [stage, setStage] = useState<FlowStage>('loading');
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
   const [navContext, setNavContext] = useState<any>(undefined);
 
   React.useEffect(() => {
-    const unsubscribe = initAuth();
-    return () => unsubscribe();
+    let resolved = false;
+
+    // 사용자 없음(또는 인증 확정 지연 시 폴백): 게스트면 유지, 아니면 로그인 화면
+    const resolveSignedOut = () => {
+      if (resolved) return;
+      resolved = true;
+      if (localStorage.getItem(GUEST_KEY) === '1') {
+        setStage(isOnboardingDone() ? 'app' : 'onboarding');
+      } else {
+        setStage('login');
+      }
+    };
+
+    const unsubscribe = initAuth(
+      // 로그인된 사용자 존재(구글/이메일): 게스트 흔적 제거 후 온보딩(최초 1회) 또는 앱으로
+      () => {
+        resolved = true;
+        localStorage.removeItem(GUEST_KEY);
+        setStage(isOnboardingDone() ? 'app' : 'onboarding');
+      },
+      resolveSignedOut
+    );
+
+    // 리다이렉트 결과 처리 등으로 인증 확정이 지연·중단돼도 UI가 무한 스플래시에
+    // 갇히지 않도록 안전장치. 실제 사용자가 뒤늦게 확정되면 onAuthSuccess가 덮어쓴다.
+    const fallback = setTimeout(resolveSignedOut, 2000);
+
+    return () => {
+      clearTimeout(fallback);
+      unsubscribe();
+    };
   }, []);
 
   const handleNavigate = (view: ViewState, context?: any) => {
@@ -34,12 +70,35 @@ export default function App() {
     setNavContext(context);
   };
 
-  // 첫 진입 플로우: 1-Tap 로그인 → 권한 사전 안내 온보딩 → 본 앱
+  // 게스트로 둘러보기: 플래그 저장 후 진입 (다음 방문에도 유지)
+  const handleGuest = () => {
+    localStorage.setItem(GUEST_KEY, '1');
+    setStage(isOnboardingDone() ? 'app' : 'onboarding');
+  };
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem(ONBOARDING_DONE_KEY, '1');
+    setStage('app');
+  };
+
+  // 인증 상태 확정 전 스플래시
+  if (stage === 'loading') {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center gap-4 bg-[#0B1020] text-white">
+        <div className="flex items-center gap-2 font-bold text-2xl tracking-tight">
+          <span className="text-cyan-400 text-3xl">✦</span> OmniBridge AI
+        </div>
+        <div className="w-6 h-6 border-2 border-white/20 border-t-cyan-400 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // 첫 진입 플로우: 로그인 → 권한 사전 안내 온보딩 → 본 앱
   if (stage === 'login') {
-    return <LoginView onAuthenticated={() => setStage('onboarding')} />;
+    return <LoginView onGuest={handleGuest} />;
   }
   if (stage === 'onboarding') {
-    return <OnboardingPermissions onComplete={() => setStage('app')} />;
+    return <OnboardingPermissions onComplete={handleOnboardingComplete} />;
   }
 
   return (
