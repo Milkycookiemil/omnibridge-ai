@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { SummaryCard } from '../types';
 import { dummyData } from '../data';
-import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard, ChevronLeft } from 'lucide-react';
+import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { uploadToGoogleDrive } from '../lib/drive';
@@ -20,7 +20,7 @@ import { getNote, saveNoteStrokes } from '../lib/notesStore';
 import { usePreferences } from '../lib/preferences';
 import { useDeviceMode } from '../lib/deviceMode';
 
-export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?: () => void }) {
+export function LiveNoteView({ navContext }: { navContext?: any }) {
   const { pushDelta } = useSyncEngine();
   const { notificationsEnabled, setNotificationsEnabled, transcriptOpen, setTranscriptOpen } = usePreferences();
   const { deviceMode } = useDeviceMode();
@@ -54,8 +54,6 @@ export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?
   // 노트북 모드의 고속 타이핑 복습 노트
   const [typedNote, setTypedNote] = useState('');
 
-  // 현재 열린 노트 제목 (편집기 헤더 표시용)
-  const [noteTitle, setNoteTitle] = useState('');
 
   const showToastMsg = (msg: string) => {
     setToastMessage(msg);
@@ -241,7 +239,6 @@ export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?
     if (noteId) {
       getNote(noteId).then((note) => {
         if (cancelled || !note) return;
-        setNoteTitle(note.title);
         if (inkRef.current) inkRef.current.loadStrokes(note.strokes);
       });
     }
@@ -337,24 +334,6 @@ export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?
 
       {isCanvasNote && (
         <>
-          {(onExit || noteTitle) && (
-            <div className="px-4 py-2 flex items-center gap-2.5 border-b border-slate-100 relative z-20 bg-white/80 backdrop-blur-md shrink-0">
-              {onExit && (
-                <button
-                  onClick={onExit}
-                  className="flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors shrink-0"
-                >
-                  <ChevronLeft className="w-4 h-4" /> 목록
-                </button>
-              )}
-              {noteTitle && (
-                <>
-                  <span className="w-px h-4 bg-slate-200 shrink-0" />
-                  <span className="font-bold text-sm text-slate-800 truncate">{noteTitle}</span>
-                </>
-              )}
-            </div>
-          )}
           <div className="p-4 flex items-center justify-between border-b border-slate-200 relative z-20 bg-white/80 backdrop-blur-md">
             <PenToolbar
               activeType={activeType}
@@ -486,9 +465,9 @@ export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?
   // ── 노트북 모드: 태블릿 필기(미러링)가 메인, 타이핑 병행 (AI는 하단 도킹) ──
   if (deviceMode === 'laptop' && isCanvasNote) {
     return (
-      <div className="absolute inset-0 pt-16 pb-12 px-4 md:px-8 max-w-7xl mx-auto flex gap-4 overflow-hidden">
+      <div className="absolute inset-0 flex overflow-hidden">
         {/* Left: 태블릿 필기 실시간 미러링 (메인) */}
-        <div className="flex-[3] min-h-0 bg-white border border-slate-200 rounded-2xl relative flex flex-col overflow-hidden shadow-sm">
+        <div className="flex-[3] min-h-0 bg-white border-r border-slate-200 relative flex flex-col overflow-hidden">
           <div className="px-4 py-1.5 bg-emerald-50/60 border-b border-emerald-100 flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> 태블릿 필기 실시간 미러링
           </div>
@@ -496,7 +475,7 @@ export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?
         </div>
 
         {/* Right: 타이핑 복습 (노트북 보조 입력) */}
-        <div className="flex-[2] min-h-0 bg-white border border-slate-200 rounded-2xl relative flex flex-col overflow-hidden shadow-sm">
+        <div className="flex-[2] min-h-0 bg-white relative flex flex-col overflow-hidden">
           <div className="p-4 flex items-center justify-between border-b border-slate-200 bg-white/80 shrink-0">
             <div className="flex items-center gap-2 text-slate-700 font-bold text-sm">
               <Keyboard className="w-5 h-5 text-blue-500" /> 타이핑 복습
@@ -516,10 +495,10 @@ export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?
     );
   }
 
-  // ── 태블릿 모드: 손필기 캔버스가 메인을 꽉 채움 (AI는 하단 도킹) ──
+  // ── 태블릿 모드: 손필기 캔버스가 페인을 꽉 채움 (AI는 하단 도킹) ──
   return (
-    <div className="absolute inset-0 pt-16 pb-12 px-4 md:px-8 max-w-7xl mx-auto flex flex-col overflow-hidden">
-      <div className="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl relative flex flex-col overflow-hidden shadow-sm">
+    <div className="absolute inset-0 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 bg-white relative flex flex-col overflow-hidden">
         {handwritingCardInner}
       </div>
 

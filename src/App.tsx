@@ -8,6 +8,8 @@ import { TopBar } from './components/TopBar';
 import { BottomNav } from './components/BottomNav';
 import { DashboardView } from './components/DashboardView';
 import { LiveNoteView } from './components/LiveNoteView';
+import { WorkspaceView } from './components/WorkspaceView';
+import { useWorkspace } from './lib/workspace';
 import { ReplayView } from './components/ReplayView';
 import { SearchView } from './components/SearchView';
 import { SettingsView } from './components/SettingsView';
@@ -66,6 +68,14 @@ export default function App() {
   }, []);
 
   const handleNavigate = (view: ViewState, context?: any) => {
+    // 저장된 노트(noteId)를 열면 작업공간 탭으로 추가. (빠른녹음/PDF/캡쳐 등 임시 흐름은 제외)
+    if (view === 'live_note' && context?.noteId) {
+      useWorkspace.getState().openNote({
+        id: context.noteId,
+        style: context.style ?? 'blank',
+        title: context.title ?? '노트',
+      });
+    }
     setCurrentView(view);
     setNavContext(context);
   };
@@ -117,7 +127,11 @@ export default function App() {
             )}
             {currentView === 'live_note' && (
               <motion.div key="live_note" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-hidden w-full">
-                <LiveNoteView navContext={navContext} onExit={() => handleNavigate('dashboard')} />
+                {navContext?.noteId ? (
+                  <WorkspaceView onEmpty={() => handleNavigate('dashboard')} />
+                ) : (
+                  <LiveNoteView navContext={navContext} />
+                )}
               </motion.div>
             )}
             {currentView === 'replay' && (

@@ -51,7 +51,7 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
   const handleCreateNote = async (style: PaperStyle) => {
     const note = await createNote(style);
     setIsNewNoteModalOpen(false);
-    onNavigate('live_note', { noteId: note.id, style });
+    onNavigate('live_note', { noteId: note.id, style, title: note.title });
   };
 
   const handleDeleteNote = async (e: React.MouseEvent, id: string) => {
@@ -192,7 +192,7 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: Math.min(idx * 0.05, 0.3) }}
                 key={note.id}
-                onClick={() => onNavigate('live_note', { noteId: note.id, style: note.style })}
+                onClick={() => onNavigate('live_note', { noteId: note.id, style: note.style, title: note.title })}
                 className="bg-white border border-slate-200 rounded-2xl p-4 cursor-pointer hover:shadow-md transition-shadow group flex flex-col relative"
               >
                 <div className="absolute top-3 right-3 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
