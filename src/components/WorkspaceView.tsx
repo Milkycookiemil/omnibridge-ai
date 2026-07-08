@@ -1,11 +1,12 @@
 // src/components/WorkspaceView.tsx
 // 다중 노트 작업공간 — 포토샵식 탭 + 좌우 2분할.
-//  - 상단 탭 바: 열린 노트 전환/닫기, 분할 토글
+//  - 상단 탭 바: 열린 노트 전환/닫기, 분할 토글, 크롬식 + 버튼(노트 열기/새 노트 팝업)
 //  - 본문: 단일 페인(왼쪽) 또는 좌/우 2분할. 각 페인은 독립 LiveNoteView 인스턴스.
-import React, { useEffect } from 'react';
-import { X, Columns2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, Columns2, Plus, PenLine } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useWorkspace } from '../lib/workspace';
+import { listNotes, createNote, type NoteMeta } from '../lib/notesStore';
 import { LiveNoteView } from './LiveNoteView';
 
 interface WorkspaceViewProps {
@@ -13,20 +14,27 @@ interface WorkspaceViewProps {
 }
 
 export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
-  const { tabs, leftId, rightId, activate, closeTab, setRight } = useWorkspace();
+  const { tabs, leftId, rightId, openNote, activate, closeTab, setRight } = useWorkspace();
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerNotes, setPickerNotes] = useState<NoteMeta[]>([]);
 
   // 탭이 모두 닫히면 대시보드로 복귀
   useEffect(() => {
     if (tabs.length === 0) onEmpty();
   }, [tabs.length, onEmpty]);
 
+  // 피커 열 때 최신 노트 목록 로드
+  useEffect(() => {
+    if (pickerOpen) listNotes().then(setPickerNotes);
+  }, [pickerOpen]);
+
   const leftTab = tabs.find((t) => t.id === leftId);
   const rightTab = tabs.find((t) => t.id === rightId);
-  // 좌/우가 같은 노트면 분할 무효(동일 노트 동시편집 충돌 방지)
   const showRight = !!rightTab && rightTab.id !== leftTab?.id;
+  const openIds = new Set(tabs.map((t) => t.id));
 
   const handleTabClick = (id: string) => {
-    // 오른쪽 페인에 있던 노트를 탭에서 누르면 좌우 스왑
     if (rightId && id === rightId) {
       const prevLeft = leftId;
       activate(id);
@@ -45,7 +53,20 @@ export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
     if (other) setRight(other.id);
   };
 
-  if (!leftTab) return null; // 빈 상태(위 effect가 대시보드로 보냄)
+  // 피커에서 기존 노트 열기
+  const openFromPicker = (n: NoteMeta) => {
+    openNote({ id: n.id, style: n.style, title: n.title });
+    setPickerOpen(false);
+  };
+
+  // 피커에서 새 노트 생성 후 열기 (무선 노트 기본)
+  const createNewNote = async () => {
+    const note = await createNote('blank');
+    openNote({ id: note.id, style: note.style, title: note.title });
+    setPickerOpen(false);
+  };
+
+  if (!leftTab) return null;
 
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden bg-slate-100">
@@ -78,6 +99,18 @@ export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
           );
         })}
 
+        {/* 크롬식 + 버튼 (노트 열기 / 새 노트) */}
+        <button
+          onClick={() => setPickerOpen((v) => !v)}
+          className={cn(
+            'shrink-0 w-8 h-8 my-1 ml-1.5 rounded-full flex items-center justify-center transition-colors',
+            pickerOpen ? 'bg-blue-100 text-blue-600' : 'text-slate-500 hover:bg-white hover:text-slate-800'
+          )}
+          title="노트 열기 / 새 노트"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+
         <div className="flex-1 min-w-4" />
 
         <button
@@ -105,7 +138,6 @@ export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
           <>
             <div className="w-px bg-slate-300 shrink-0" />
             <div className="relative flex-1 min-w-0 flex flex-col">
-              {/* 오른쪽 페인 헤더: 표시할 노트 선택 + 분할 닫기 */}
               <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200 bg-slate-50 shrink-0 z-30">
                 <span className="text-xs text-slate-400 shrink-0">오른쪽</span>
                 <select
@@ -137,6 +169,58 @@ export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
           </>
         )}
       </div>
+
+      {/* 노트 열기 / 새 노트 팝업 (크롬 탭 + 버튼) */}
+      {pickerOpen && (
+        <div className="absolute inset-0 z-40" onClick={() => setPickerOpen(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-11 left-3 w-80 max-h-[70%] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
+          >
+            <div className="px-4 py-2.5 border-b border-slate-100 text-sm font-bold text-slate-700 shrink-0">
+              노트 열기
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-1.5">
+              {pickerNotes.length === 0 ? (
+                <div className="text-center text-sm text-slate-400 py-8">저장된 노트가 없어요.</div>
+              ) : (
+                pickerNotes.map((n) => (
+                  <button
+                    key={n.id}
+                    onClick={() => openFromPicker(n)}
+                    className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 text-left transition-colors"
+                  >
+                    <div className="w-10 h-10 rounded-md bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+                      {n.thumbnail ? (
+                        <img src={n.thumbnail} alt={n.title} className="w-full h-full object-contain" draggable={false} />
+                      ) : (
+                        <PenLine className="w-4 h-4 text-slate-300" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">{n.title}</div>
+                      <div className="text-xs text-slate-400">
+                        {openIds.has(n.id) ? '열려 있음' : new Date(n.updatedAt).toLocaleDateString('ko-KR')}
+                      </div>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+
+            {/* 맨 아래: 새 노트 (홈의 '새 노트'와 동일 스타일) */}
+            <div className="p-2 border-t border-slate-100 shrink-0">
+              <button
+                onClick={createNewNote}
+                className="w-full bg-gradient-sync text-white flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-xl shadow-sm hover:opacity-90 transition-opacity"
+              >
+                <Plus className="w-4 h-4" /> 새 노트
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
