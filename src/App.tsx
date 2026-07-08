@@ -117,7 +117,7 @@ export default function App() {
             )}
             {currentView === 'live_note' && (
               <motion.div key="live_note" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-hidden w-full">
-                <LiveNoteView navContext={navContext} />
+                <LiveNoteView navContext={navContext} onExit={() => handleNavigate('dashboard')} />
               </motion.div>
             )}
             {currentView === 'replay' && (

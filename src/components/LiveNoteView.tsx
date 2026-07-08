@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { SummaryCard } from '../types';
 import { dummyData } from '../data';
-import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard } from 'lucide-react';
+import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard, ChevronLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { uploadToGoogleDrive } from '../lib/drive';
@@ -20,7 +20,7 @@ import { getNote, saveNoteStrokes } from '../lib/notesStore';
 import { usePreferences } from '../lib/preferences';
 import { useDeviceMode } from '../lib/deviceMode';
 
-export function LiveNoteView({ navContext }: { navContext?: any }) {
+export function LiveNoteView({ navContext, onExit }: { navContext?: any; onExit?: () => void }) {
   const { pushDelta } = useSyncEngine();
   const { notificationsEnabled, setNotificationsEnabled, transcriptOpen, setTranscriptOpen } = usePreferences();
   const { deviceMode } = useDeviceMode();
@@ -53,6 +53,9 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
 
   // 노트북 모드의 고속 타이핑 복습 노트
   const [typedNote, setTypedNote] = useState('');
+
+  // 현재 열린 노트 제목 (편집기 헤더 표시용)
+  const [noteTitle, setNoteTitle] = useState('');
 
   const showToastMsg = (msg: string) => {
     setToastMessage(msg);
@@ -237,7 +240,9 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     inkRef.current.clear();
     if (noteId) {
       getNote(noteId).then((note) => {
-        if (!cancelled && note && inkRef.current) inkRef.current.loadStrokes(note.strokes);
+        if (cancelled || !note) return;
+        setNoteTitle(note.title);
+        if (inkRef.current) inkRef.current.loadStrokes(note.strokes);
       });
     }
     return () => {
@@ -332,6 +337,24 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
 
       {isCanvasNote && (
         <>
+          {(onExit || noteTitle) && (
+            <div className="px-4 py-2 flex items-center gap-2.5 border-b border-slate-100 relative z-20 bg-white/80 backdrop-blur-md shrink-0">
+              {onExit && (
+                <button
+                  onClick={onExit}
+                  className="flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors shrink-0"
+                >
+                  <ChevronLeft className="w-4 h-4" /> 목록
+                </button>
+              )}
+              {noteTitle && (
+                <>
+                  <span className="w-px h-4 bg-slate-200 shrink-0" />
+                  <span className="font-bold text-sm text-slate-800 truncate">{noteTitle}</span>
+                </>
+              )}
+            </div>
+          )}
           <div className="p-4 flex items-center justify-between border-b border-slate-200 relative z-20 bg-white/80 backdrop-blur-md">
             <PenToolbar
               activeType={activeType}

@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ViewState } from '../types';
 import { dummyData } from '../data';
-import { Play, Sparkles, Plus, FileText, AlertTriangle, Mic, FilePlus, File, ChevronLeft, X, Trash2, PenLine } from 'lucide-react';
+import { Play, Sparkles, Plus, FileText, AlertTriangle, Mic, FilePlus, File, ChevronLeft, X, Trash2, PenLine, Pencil } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { listNotes, createNote, deleteNote, type NoteMeta, type PaperStyle } from '../lib/notesStore';
+import { listNotes, createNote, deleteNote, renameNote, type NoteMeta, type PaperStyle } from '../lib/notesStore';
 
 interface DashboardViewProps {
   onNavigate: (view: ViewState, context?: any) => void;
@@ -16,10 +16,29 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
 
   // 실제 저장된 노트 목록 (IndexedDB)
   const [notes, setNotes] = useState<NoteMeta[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
 
   useEffect(() => {
     listNotes().then(setNotes);
   }, []);
+
+  const startRename = (e: React.MouseEvent, note: NoteMeta) => {
+    e.stopPropagation();
+    setEditingId(note.id);
+    setEditTitle(note.title);
+  };
+
+  const commitRename = async () => {
+    const id = editingId;
+    setEditingId(null);
+    if (!id) return;
+    const title = editTitle.trim();
+    if (title) {
+      await renameNote(id, title);
+      setNotes(await listNotes());
+    }
+  };
 
   const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -176,13 +195,22 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                 onClick={() => onNavigate('live_note', { noteId: note.id, style: note.style })}
                 className="bg-white border border-slate-200 rounded-2xl p-4 cursor-pointer hover:shadow-md transition-shadow group flex flex-col relative"
               >
-                <button
-                  onClick={(e) => handleDeleteNote(e, note.id)}
-                  className="absolute top-3 right-3 z-10 w-7 h-7 rounded-lg bg-white/80 border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="노트 삭제"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                <div className="absolute top-3 right-3 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => startRename(e, note)}
+                    className="w-7 h-7 rounded-lg bg-white/80 border border-slate-200 text-slate-400 hover:text-blue-500 hover:border-blue-200 flex items-center justify-center"
+                    title="이름 바꾸기"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteNote(e, note.id)}
+                    className="w-7 h-7 rounded-lg bg-white/80 border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 flex items-center justify-center"
+                    title="노트 삭제"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
                 <div className="w-full h-24 bg-slate-50 border border-slate-100 rounded-lg mb-3 flex items-center justify-center group-hover:bg-slate-100 transition-colors overflow-hidden">
                   {note.thumbnail ? (
                     <img src={note.thumbnail} alt={note.title} className="w-full h-full object-contain" draggable={false} />
@@ -190,7 +218,19 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                     <PenLine className="w-8 h-8 text-slate-300 group-hover:text-slate-400 transition-colors" />
                   )}
                 </div>
-                <h4 className="font-medium text-sm truncate mb-1 text-slate-800">{note.title}</h4>
+                {editingId === note.id ? (
+                  <input
+                    autoFocus
+                    value={editTitle}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingId(null); }}
+                    className="w-full font-medium text-sm mb-1 text-slate-800 border border-blue-300 rounded px-1.5 py-0.5 outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                ) : (
+                  <h4 className="font-medium text-sm truncate mb-1 text-slate-800">{note.title}</h4>
+                )}
                 <p className="text-xs text-slate-400">{formatDate(note.updatedAt)}</p>
               </motion.div>
             ))}
