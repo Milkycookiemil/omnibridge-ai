@@ -8,10 +8,15 @@ import { create } from 'zustand';
 import * as Y from 'yjs';
 import { supabase, isSupabaseConfigured, CLIENT_ID } from './supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import type { InkSegment } from './inkEngine';
+import type { InkDelta, InkSegment } from './inkEngine';
 
-// 잉크 세그먼트(penType·width·opacity 포함)가 실시간 릴레이의 델타 청크 최소 단위.
-export type { InkSegment };
+// 잉크 델타(세그먼트 또는 erase_strokes 연산)가 실시간 릴레이의 최소 단위.
+// CRDT에는 append-only로 쌓여 리플레이 시 순서대로 적용된다 (삭제 포함 상태 재현).
+export type { InkDelta, InkSegment };
+
+// 세그먼트 / 삭제 연산 판별
+const isInkDelta = (d: any): d is InkDelta =>
+  !!d && typeof d === 'object' && (('from' in d && 'to' in d) || d.type === 'erase_strokes');
 
 interface SyncState {
   isOnline: boolean;
@@ -31,26 +36,26 @@ interface SyncState {
   triggerManualFlush: () => void;
 }
 
-// --- CRDT 문서: 모든 스트로크의 충돌 없는 단일 진실 공급원 ---
+// --- CRDT 문서: 모든 잉크 이벤트의 충돌 없는 단일 진실 공급원 ---
 const ydoc = new Y.Doc();
-const yStrokes = ydoc.getArray<InkSegment>('strokes');
+const yStrokes = ydoc.getArray<InkDelta>('strokes');
 
 // 오프라인 격리 큐 (네트워크 단절 시 보관 → 복귀 시 CRDT 병합)
-let offlineQueue: InkSegment[] = [];
+let offlineQueue: InkDelta[] = [];
 let debounceTimer: any = null;
 let channel: RealtimeChannel | null = null;
 
-// 원격 스트로크 수신 리스너 (LiveNoteView가 캔버스에 그리기 위해 구독)
-type RemoteListener = (seg: InkSegment) => void;
+// 원격 델타 수신 리스너 (LiveNoteView가 캔버스에 반영하기 위해 구독)
+type RemoteListener = (delta: InkDelta) => void;
 const remoteListeners = new Set<RemoteListener>();
 export const onRemoteStroke = (cb: RemoteListener): (() => void) => {
   remoteListeners.add(cb);
   return () => remoteListeners.delete(cb);
 };
-const emitRemote = (seg: InkSegment) => remoteListeners.forEach((cb) => cb(seg));
+const emitRemote = (delta: InkDelta) => remoteListeners.forEach((cb) => cb(delta));
 
-// CRDT에 누적된 모든 잉크 세그먼트 (기기 전환/늦은 합류 시 캔버스 리플레이용 — 유실 0 보장)
-export const getAllStrokes = (): InkSegment[] => yStrokes.toArray();
+// CRDT에 누적된 모든 잉크 이벤트 (기기 전환/늦은 합류 시 캔버스 리플레이용 — 유실 0 보장)
+export const getAllStrokes = (): InkDelta[] => yStrokes.toArray();
 
 export const useSyncEngine = create<SyncState>((set, get) => {
   // --- 1단계: Supabase Realtime 채널 구독 ---
@@ -61,11 +66,11 @@ export const useSyncEngine = create<SyncState>((set, get) => {
       config: { broadcast: { self: false }, presence: { key: CLIENT_ID } },
     });
 
-    // 원격 기기가 보낸 잉크 델타 수신 → CRDT 반영 + 캔버스 렌더
+    // 원격 기기가 보낸 잉크 델타(세그먼트/삭제) 수신 → CRDT 반영 + 캔버스 렌더
     channel.on('broadcast', { event: 'stroke' }, ({ payload }) => {
-      const seg = payload as InkSegment;
-      yStrokes.push([seg]);
-      emitRemote(seg);
+      const delta = payload as InkDelta;
+      yStrokes.push([delta]);
+      emitRemote(delta);
       set({ relayStatus: 'synced' });
     });
 
@@ -88,13 +93,13 @@ export const useSyncEngine = create<SyncState>((set, get) => {
     setTimeout(initRealtime, 0);
   }
 
-  // 오프라인 큐에 쌓인 스트로크를 CRDT로 병합하고 재전송
+  // 오프라인 큐에 쌓인 델타를 CRDT로 병합하고 재전송
   const mergeOfflineQueue = () => {
     if (offlineQueue.length === 0) return;
     yStrokes.push([...offlineQueue]);
     if (channel && get().liveConnected) {
-      offlineQueue.forEach((seg) =>
-        channel!.send({ type: 'broadcast', event: 'stroke', payload: seg })
+      offlineQueue.forEach((d) =>
+        channel!.send({ type: 'broadcast', event: 'stroke', payload: d })
       );
     }
     offlineQueue = [];
@@ -117,15 +122,14 @@ export const useSyncEngine = create<SyncState>((set, get) => {
     offlineQueueLength: 0,
 
     pushDelta: (delta) => {
-      // stroke 세그먼트만 동기화 대상. (그 외 이벤트는 무시)
-      const seg: InkSegment | null =
-        delta && delta.from && delta.to ? (delta as InkSegment) : null;
+      // 잉크 델타(세그먼트 또는 erase_strokes)만 동기화 대상. (그 외 이벤트는 무시)
+      const d: InkDelta | null = isInkDelta(delta) ? delta : null;
 
       const { isOnline } = get();
 
       // 오프라인: 로컬 큐에 안전 격리 (Zero-Loss 세이프가드)
       if (!isOnline) {
-        if (seg) offlineQueue.push(seg);
+        if (d) offlineQueue.push(d);
         set({ offlineQueueLength: offlineQueue.length });
         return;
       }
@@ -133,11 +137,11 @@ export const useSyncEngine = create<SyncState>((set, get) => {
       // --- 1단계: 실시간 릴레이 ---
       set({ relayStatus: 'syncing' });
 
-      if (seg) {
-        yStrokes.push([seg]); // CRDT 로컬 반영
+      if (d) {
+        yStrokes.push([d]); // CRDT 로컬 반영 (append-only: 삭제도 이벤트로 쌓임)
         if (channel && get().liveConnected) {
           // 실제 웹소켓 broadcast (≈0.1초)
-          channel.send({ type: 'broadcast', event: 'stroke', payload: seg });
+          channel.send({ type: 'broadcast', event: 'stroke', payload: d });
           set({ relayStatus: 'synced' });
         } else {
           // Supabase 미설정 → 시뮬레이션

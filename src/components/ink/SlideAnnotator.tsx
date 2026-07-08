@@ -94,6 +94,7 @@ export function SlideAnnotator({ image, onSave, onClose }: SlideAnnotatorProps) 
                 pen={activePen}
                 width={dims.w}
                 height={dims.h}
+                showLayers
                 className="w-full h-full"
               />
             </div>

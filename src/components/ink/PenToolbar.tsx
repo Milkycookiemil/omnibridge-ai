@@ -167,6 +167,37 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
               </div>
             )}
 
+            {isEraser && (
+              <div>
+                <div className="text-[11px] font-bold text-slate-400 mb-2">지우개 모드</div>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => updateActivePen({ eraserMode: 'area' })}
+                    className={cn("flex-1 py-1.5 text-[11px] font-bold rounded-lg border transition-colors",
+                      (activePen.eraserMode ?? 'area') === 'area'
+                        ? "bg-slate-800 text-white border-slate-800"
+                        : "border-slate-200 text-slate-500 hover:bg-slate-50")}
+                  >
+                    영역 지우기
+                  </button>
+                  <button
+                    onClick={() => updateActivePen({ eraserMode: 'stroke' })}
+                    className={cn("flex-1 py-1.5 text-[11px] font-bold rounded-lg border transition-colors",
+                      activePen.eraserMode === 'stroke'
+                        ? "bg-slate-800 text-white border-slate-800"
+                        : "border-slate-200 text-slate-500 hover:bg-slate-50")}
+                  >
+                    획 지우기
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1.5 leading-snug">
+                  {(activePen.eraserMode ?? 'area') === 'area'
+                    ? '문지른 영역의 잉크를 지웁니다.'
+                    : '스치기만 해도 획을 통째로 지웁니다.'}
+                </p>
+              </div>
+            )}
+
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[11px] font-bold text-slate-400">굵기</span>

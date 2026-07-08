@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { SummaryCard } from '../types';
 import { dummyData } from '../data';
-import { Mic, Square, Zap, Lock, Bell, BellOff, Sparkles, Keyboard, Tablet } from 'lucide-react';
+import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { uploadToGoogleDrive } from '../lib/drive';
@@ -15,7 +15,7 @@ import { usePenState } from '../hooks/usePenState';
 import { useTranscription } from '../hooks/useTranscription';
 
 import { useSyncEngine, onRemoteStroke, getAllStrokes } from '../lib/syncEngine';
-import type { InkSegment } from '../lib/inkEngine';
+import type { InkDelta } from '../lib/inkEngine';
 import { usePreferences } from '../lib/preferences';
 import { useDeviceMode } from '../lib/deviceMode';
 
@@ -167,22 +167,22 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     }
   };
 
-  // 로컬에서 그린 세그먼트 → 실시간 릴레이(Supabase Realtime broadcast)
-  const handleLocalSegment = (seg: InkSegment) => {
-    pushDelta(seg);
+  // 로컬 잉크 델타(세그먼트/획 삭제) → 실시간 릴레이(Supabase Realtime broadcast)
+  const handleLocalDelta = (delta: InkDelta) => {
+    pushDelta(delta);
   };
 
-  // 원격 기기에서 들어온 스트로크를 실시간으로 캔버스에 반영
+  // 원격 기기에서 들어온 델타(필기·삭제)를 실시간으로 캔버스에 반영
   useEffect(() => {
-    const unsub = onRemoteStroke((seg) => inkRef.current?.drawSegment(seg));
+    const unsub = onRemoteStroke((delta) => inkRef.current?.applyDelta(delta));
     return () => { unsub(); };
   }, []);
 
-  // 캔버스 (재)마운트 시 CRDT에 누적된 모든 획을 다시 그림.
-  // → 기기 모드 전환·늦은 합류에도 필기 유실 0 (김지원 페르소나 핵심 요구).
+  // 캔버스 (재)마운트 시 CRDT에 누적된 모든 이벤트를 순서대로 재적용.
+  // 삭제 연산까지 포함해 동일 상태 재현 → 기기 전환·늦은 합류에도 필기 유실 0.
   useEffect(() => {
     inkRef.current?.clear();
-    getAllStrokes().forEach((seg) => inkRef.current?.drawSegment(seg));
+    getAllStrokes().forEach((delta) => inkRef.current?.applyDelta(delta));
   }, [deviceMode, paperStyle]);
 
   const formatTime = (secs: number) => {
@@ -248,7 +248,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       ref={inkRef}
       pen={activePen}
       backgroundStyle={backgroundStyle}
-      onSegment={handleLocalSegment}
+      onDelta={handleLocalDelta}
+      showLayers={deviceMode !== 'laptop'} // 노트북 모드의 작은 미러 뷰에선 패널 숨김
       className="flex-1"
     />
   );
