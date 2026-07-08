@@ -5,19 +5,23 @@
 import React, { useEffect, useState } from 'react';
 import { X, Columns2, Plus, PenLine } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { ViewState } from '../types';
 import { useWorkspace } from '../lib/workspace';
-import { listNotes, createNote, type NoteMeta } from '../lib/notesStore';
+import { listNotes, type NoteMeta } from '../lib/notesStore';
 import { LiveNoteView } from './LiveNoteView';
+import { NewNoteModal } from './NewNoteModal';
 
 interface WorkspaceViewProps {
   onEmpty: () => void; // 모든 탭이 닫히면 대시보드로
+  onNavigate: (view: ViewState, context?: any) => void;
 }
 
-export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
+export function WorkspaceView({ onEmpty, onNavigate }: WorkspaceViewProps) {
   const { tabs, leftId, rightId, openNote, activate, closeTab, setRight } = useWorkspace();
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerNotes, setPickerNotes] = useState<NoteMeta[]>([]);
+  const [newModalOpen, setNewModalOpen] = useState(false);
 
   // 탭이 모두 닫히면 대시보드로 복귀
   useEffect(() => {
@@ -56,13 +60,6 @@ export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
   // 피커에서 기존 노트 열기
   const openFromPicker = (n: NoteMeta) => {
     openNote({ id: n.id, style: n.style, title: n.title });
-    setPickerOpen(false);
-  };
-
-  // 피커에서 새 노트 생성 후 열기 (무선 노트 기본)
-  const createNewNote = async () => {
-    const note = await createNote('blank');
-    openNote({ id: note.id, style: note.style, title: note.title });
     setPickerOpen(false);
   };
 
@@ -212,7 +209,10 @@ export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
             {/* 맨 아래: 새 노트 (홈의 '새 노트'와 동일 스타일) */}
             <div className="p-2 border-t border-slate-100 shrink-0">
               <button
-                onClick={createNewNote}
+                onClick={() => {
+                  setPickerOpen(false);
+                  setNewModalOpen(true);
+                }}
                 className="w-full bg-gradient-sync text-white flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-xl shadow-sm hover:opacity-90 transition-opacity"
               >
                 <Plus className="w-4 h-4" /> 새 노트
@@ -221,6 +221,9 @@ export function WorkspaceView({ onEmpty }: WorkspaceViewProps) {
           </div>
         </div>
       )}
+
+      {/* 새 노트 생성 모달 (홈과 동일) */}
+      <NewNoteModal open={newModalOpen} onClose={() => setNewModalOpen(false)} onNavigate={onNavigate} />
     </div>
   );
 }
