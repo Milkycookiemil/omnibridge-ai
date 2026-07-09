@@ -7,6 +7,8 @@ interface LoginViewProps {
   // 게스트로 둘러보기 (실계정 없이 진입). 실계정 로그인/회원가입 성공은
   // App의 인증 리스너가 자동으로 화면을 전환한다.
   onGuest: () => void;
+  // 약관/개인정보 페이지 열기
+  onShowLegal?: (doc: 'terms' | 'privacy') => void;
 }
 
 const TRUST_SIGNALS = [
@@ -17,7 +19,7 @@ const TRUST_SIGNALS = [
 
 type Mode = 'login' | 'signup';
 
-export function LoginView({ onGuest }: LoginViewProps) {
+export function LoginView({ onGuest, onShowLegal }: LoginViewProps) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -195,7 +197,11 @@ export function LoginView({ onGuest }: LoginViewProps) {
           </button>
 
           <p className="mt-8 text-center text-xs text-slate-400 leading-relaxed">
-            계속 진행하면 서비스 약관 및 개인정보 처리방침에 동의하게 됩니다.<br />
+            계속 진행하면{' '}
+            <button type="button" onClick={() => onShowLegal?.('terms')} className="underline hover:text-slate-600">서비스 약관</button>
+            {' '}및{' '}
+            <button type="button" onClick={() => onShowLegal?.('privacy')} className="underline hover:text-slate-600">개인정보 처리방침</button>
+            에 동의하게 됩니다.<br />
             필기 데이터는 안전하게 클라우드에 동기화됩니다.
           </p>
         </motion.div>

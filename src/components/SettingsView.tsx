@@ -63,9 +63,10 @@ type SettingGroup =
 
 interface SettingsViewProps {
   onLogout: () => void;
+  onShowLegal?: (doc: 'terms' | 'privacy') => void;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLegal }) => {
   const [activeGroup, setActiveGroup] = useState<SettingGroup>('account');
   const currentEmail = getCurrentUser()?.email ?? null;
   const { notificationsEnabled, setNotificationsEnabled } = usePreferences();
@@ -786,6 +787,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout }) => {
                          {p}
                        </span>
                      ))}
+                  </div>
+
+                  <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-center gap-4 text-sm font-medium">
+                     <button onClick={() => onShowLegal?.('terms')} className="text-slate-500 hover:text-slate-800 underline">
+                       이용약관
+                     </button>
+                     <span className="text-slate-300">·</span>
+                     <button onClick={() => onShowLegal?.('privacy')} className="text-slate-500 hover:text-slate-800 underline">
+                       개인정보처리방침
+                     </button>
                   </div>
                 </div>
               )}

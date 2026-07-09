@@ -19,6 +19,7 @@ import { initAuth, logout } from './lib/auth';
 import { syncNotesFromCloud } from './lib/notesStore';
 import { LoginView } from './components/onboarding/LoginView';
 import { OnboardingPermissions } from './components/onboarding/OnboardingPermissions';
+import { LegalView, type LegalDoc } from './components/LegalView';
 
 type FlowStage = 'loading' | 'login' | 'onboarding' | 'app';
 
@@ -33,6 +34,8 @@ export default function App() {
   const [stage, setStage] = useState<FlowStage>('loading');
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
   const [navContext, setNavContext] = useState<any>(undefined);
+  // 약관/개인정보 오버레이 (로그인·앱 어느 단계에서도 위에 표시)
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
 
   React.useEffect(() => {
     let resolved = false;
@@ -106,6 +109,12 @@ export default function App() {
     setStage('login');
   };
 
+  // 약관/개인정보 페이지는 로그인·앱 어느 단계에서든 최상단에 표시하고, 뒤로가기 시
+  // 이전 화면(로그인 또는 앱)으로 복귀한다.
+  if (legalDoc) {
+    return <LegalView doc={legalDoc} onBack={() => setLegalDoc(null)} onSwitch={setLegalDoc} />;
+  }
+
   // 인증 상태 확정 전 스플래시
   if (stage === 'loading') {
     return (
@@ -120,7 +129,7 @@ export default function App() {
 
   // 첫 진입 플로우: 로그인 → 권한 사전 안내 온보딩 → 본 앱
   if (stage === 'login') {
-    return <LoginView onGuest={handleGuest} />;
+    return <LoginView onGuest={handleGuest} onShowLegal={setLegalDoc} />;
   }
   if (stage === 'onboarding') {
     return <OnboardingPermissions onComplete={handleOnboardingComplete} />;
@@ -161,7 +170,7 @@ export default function App() {
             )}
             {currentView === 'settings' && (
               <motion.div key="settings" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-hidden w-full">
-                <SettingsView onLogout={handleLogout} />
+                <SettingsView onLogout={handleLogout} onShowLegal={setLegalDoc} />
               </motion.div>
             )}
           </AnimatePresence>
