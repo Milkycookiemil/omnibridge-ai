@@ -174,14 +174,14 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 - ✅ 인증 · 필기 엔진(펜 5종/레이어/획·영역 지우개) · 온디바이스 Whisper 전사.
 - ❌ AI 요약 카드 = 더미 (실 LLM 아님).
 - ❌ **기기 간 동기화·클라우드 저장 없음** — 노트는 현재 브라우저 IndexedDB에만. 계정별 격리도 로컬은 없음(같은 브라우저 공유). Drive는 업로드만, 읽기 없음.
-- 🟡 Supabase는 Realtime 브로드캐스트(획 전송)만. DB 영속 없음, `persistSession:false`.
+- 🟡 Supabase = **인증(Auth) 사용 중** + Realtime 브로드캐스트. 노트 DB 영속(4b)은 아직 미구현.
 - ⚠️ PDF/캡쳐 노트는 비영속(임시 뷰). PDF 필기는 페이지 로컬 상태.
 
 ### 제품화 로드맵
 | 단계 | 내용 | 외부 준비물 | 상태 |
 |---|---|---|---|
 | **1a** | 로컬 우선 실제 노트 CRUD (IndexedDB), 더미 제거 + 다중 노트 워크스페이스(탭/분할) | 없음 | ✅ **완료** |
-| **1b** | Supabase 저장 + 계정별 격리(RLS), Firebase Third-Party Auth 연동 | **Supabase 프로젝트** | ⬜ 다음 |
+| **1b** | Supabase 저장 + 계정별 격리(RLS). 인증도 Supabase Auth로 통합(Path 2) | Supabase 프로젝트 | 🔄 진행 중 (4a ✅ / 4b 남음) |
 | **1c** | Drive 선택적 내보내기 | (업로드 코드 존재) | ⬜ |
 | **2** | 개인정보처리방침/이용약관 페이지, 보안 규칙, 실제 호스팅+도메인 | 도메인 | ⬜ |
 | **3** | Stripe 등 구독 결제 | 결제사 계정 | ⬜ |
@@ -194,11 +194,24 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 - `c430ead` 다중 노트 워크스페이스: 탭 + 2분할 + 꽉찬 레이아웃
 - `f78a01d` 크롬식 `+` 버튼 → 노트 열기/새 노트 팝업
 - `4ffdc8a` 새 노트 모달 공용화(`NewNoteModal`) — 홈·워크스페이스 동일
+- `fb24917` **1b-4a**: 인증을 Firebase→**Supabase Auth(이메일)**로 전환 + `supabase/schema.sql`(notes+RLS)
+- `51a4ee0` 로그아웃/프로필 드롭다운 + 설정 로그아웃 + 조건부 구독해지
 
-### 다음 작업: 1b (Supabase 동기화 + 계정별 격리)
-- **선행 필요:** 사용자의 Supabase 무료 프로젝트 (URL + anon key). Firebase 때처럼 단계별 안내 예정.
-- 핵심: `notesStore`(IndexedDB)를 Supabase DB와 동기화(로컬=오프라인 캐시), Firebase Third-Party Auth로 RLS 계정별 격리.
-- 주의(SIM 지적): 전역 `syncEngine.yStrokes`가 모든 획을 누적 → Supabase 키 넣으면 노트 구분 없이 유입될 수 있어 노트별 채널/스코프 필요. 로컬 IndexedDB는 현재 사용자 무관 공유라 RLS로 분리해야 함.
+### 1b 진행 상황 (Supabase 클라우드 저장 + 계정별 격리)
+**인증 방식 결정 = Path 2 (Supabase Auth로 통합).** Firebase↔Supabase 서드파티 인증은 `role:authenticated` 커스텀 클레임(Firebase Cloud Function + Blaze 유료플랜) 필요라 부담 → 더 단순한 Supabase Auth로 전환. Firebase 코드/설정은 잔존(미사용, 이후 정리 가능).
+
+- ✅ **4a 완료** (`fb24917`, `51a4ee0`): 인증을 Supabase Auth(이메일)로 교체. 세션 자동유지·자동로그인, 로그인 화면 구글 버튼 제거, 상단 프로필 드롭다운·설정 로그아웃. Google/Drive는 현재 비활성(no-op, 이후 추가).
+- ⬜ **4b 남음**: `notesStore`(IndexedDB)를 Supabase `notes` 테이블과 동기화(로컬=오프라인 캐시), RLS `auth.uid()`로 계정별 격리.
+
+**환경/설정 (사용자 소유):**
+- Supabase 프로젝트 `wegzchfcbcfuzggwpxft`, 키는 `.env.local`(git 제외). dev 서버 재시작 필요.
+- `notes` 테이블 + RLS(`auth.jwt()->>'sub' = user_id`) 생성 완료 → `supabase/schema.sql`.
+- 테스트 계정: `a@test.com`(생성·확인·로그인 검증됨), `b@test.com`(격리 테스트용, 필요). Supabase → Authentication → Users → Add user → **Auto Confirm User**로 생성(대시보드의 Confirm email 토글이 안 보여 Users 직접 생성으로 우회).
+
+**4b 주의(SIM):**
+- 전역 `syncEngine.yStrokes`가 모든 획을 누적 → 노트별 스코프 필요(1a는 이미 노트별 IndexedDB로 분리).
+- 로컬 IndexedDB는 사용자 무관 공유 → Supabase는 RLS로 분리하고, 로컬 캐시도 user별 키 분리 고려.
+- 구독 해지 버튼은 `plan!=='free'`일 때만 표시되나 실제 Pro 전환 경로(Stripe, 3단계)가 없어 현재는 도달 불가(배선만).
 
 ### 협업 에이전트 팀 (`.claude/agents/`)
 바이브코딩(메인 코딩) · SIM(냉정 QA, 매 응답 끝 오류 점검) · UX/UI 디자이너 · AI 사업화 · AI 전문가.
