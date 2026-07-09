@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  User, Cloud, Sparkles, PenTool, LayoutTemplate, 
-  BatteryWarning, Bell, ChevronRight, 
-  Plus, ArrowRight, Zap, Check, X, Shield, Lock, TriangleAlert, Info, Mic
+import {
+  User, Cloud, Sparkles, PenTool, LayoutTemplate,
+  BatteryWarning, Bell, ChevronRight,
+  Plus, ArrowRight, Zap, Check, X, Shield, Lock, TriangleAlert, Info, Mic, LogOut
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 
-import { googleSignIn, getAccessToken, logout } from '../lib/auth';
+import { googleSignIn, getAccessToken, logout, getCurrentUser } from '../lib/auth';
 import { usePreferences } from '../lib/preferences';
 
 const DUMMY_DATA = {
@@ -56,8 +56,13 @@ type SettingGroup =
   | 'notification' 
   | 'permission';
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  onLogout: () => void;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout }) => {
   const [activeGroup, setActiveGroup] = useState<SettingGroup>('account');
+  const currentEmail = getCurrentUser()?.email ?? null;
   const { notificationsEnabled, setNotificationsEnabled } = usePreferences();
   const [data, setData] = useState(DUMMY_DATA);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
@@ -215,18 +220,24 @@ export const SettingsView: React.FC = () => {
               {activeGroup === 'account' && (
                 <div className="space-y-8">
                   {/* Profile Section */}
-                  <div className="bg-white p-6 justify-between flex items-center rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xl">
-                        {data.account.name.charAt(0)}
+                  <div className="bg-white p-6 justify-between flex items-center gap-4 rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xl shrink-0">
+                        {(currentEmail ?? data.account.name).charAt(0).toUpperCase()}
                       </div>
-                      <div>
-                        <h4 className="font-bold text-lg text-slate-800">{data.account.name}</h4>
+                      <div className="min-w-0">
+                        <h4 className="font-bold text-lg text-slate-800 truncate">{currentEmail ?? '게스트'}</h4>
                         <p className="text-sm text-slate-500 font-medium flex items-center gap-1.5">
-                           <span className="w-1.5 h-1.5 rounded-full bg-teal-500 inline-block"/> {data.account.email}
+                           <span className="w-1.5 h-1.5 rounded-full bg-teal-500 inline-block"/> {currentEmail ? 'Supabase 계정으로 로그인됨' : '게스트 모드'}
                         </p>
                       </div>
                     </div>
+                    <button
+                      onClick={onLogout}
+                      className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm font-bold text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" /> 로그아웃
+                    </button>
                   </div>
                   
                   {/* Subscription Plan — Free에 거의 모든 기능, Pro는 전문가/팀 전용 부가기능만 */}
@@ -266,8 +277,16 @@ export const SettingsView: React.FC = () => {
                         </ul>
                       </div>
                     </div>
+                    {data.account.plan !== 'free' && (
+                      <button
+                        onClick={() => setData((prev) => ({ ...prev, account: { ...prev.account, plan: 'free' } }))}
+                        className="mt-4 text-sm font-bold text-rose-500 hover:text-rose-600 hover:underline"
+                      >
+                        구독 해지
+                      </button>
+                    )}
                   </div>
-                  
+
                   {/* Devices */}
                   <div>
                     <div className="flex items-center justify-between pl-2 mb-4">

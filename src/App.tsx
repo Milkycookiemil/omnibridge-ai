@@ -15,7 +15,7 @@ import { SearchView } from './components/SearchView';
 import { SettingsView } from './components/SettingsView';
 import { AnimatePresence, motion } from 'motion/react';
 
-import { initAuth } from './lib/auth';
+import { initAuth, logout } from './lib/auth';
 import { LoginView } from './components/onboarding/LoginView';
 import { OnboardingPermissions } from './components/onboarding/OnboardingPermissions';
 
@@ -91,6 +91,17 @@ export default function App() {
     setStage('app');
   };
 
+  // 로그아웃: 게스트 흔적 제거 + Supabase 세션 종료 → 로그인 화면으로.
+  const handleLogout = async () => {
+    localStorage.removeItem(GUEST_KEY);
+    try {
+      await logout();
+    } catch (e) {
+      console.warn('logout 실패:', e);
+    }
+    setStage('login');
+  };
+
   // 인증 상태 확정 전 스플래시
   if (stage === 'loading') {
     return (
@@ -113,8 +124,8 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#F4F5F7] text-slate-800 font-sans overflow-hidden">
-      <TopBar />
-      
+      <TopBar onNavigate={handleNavigate} onLogout={handleLogout} />
+
       <div className="flex flex-1 overflow-hidden">
         <BottomNav currentView={currentView} onViewChange={handleNavigate} />
         
@@ -146,7 +157,7 @@ export default function App() {
             )}
             {currentView === 'settings' && (
               <motion.div key="settings" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-hidden w-full">
-                <SettingsView />
+                <SettingsView onLogout={handleLogout} />
               </motion.div>
             )}
           </AnimatePresence>

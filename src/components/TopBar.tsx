@@ -1,13 +1,22 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { dummyData } from '../data';
-import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, Tablet, Laptop } from 'lucide-react';
+import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, Tablet, Laptop, LogOut, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useSyncEngine } from '../lib/syncEngine';
 import { useDeviceMode } from '../lib/deviceMode';
+import { getCurrentUser } from '../lib/auth';
+import { ViewState } from '../types';
 
-export function TopBar() {
+interface TopBarProps {
+  onNavigate: (view: ViewState, context?: any) => void;
+  onLogout: () => void;
+}
+
+export function TopBar({ onNavigate, onLogout }: TopBarProps) {
   const { isOnline, relayStatus, driveStatus, lastDriveSync, setOnline, liveConnected, peerCount } = useSyncEngine();
   const { deviceMode, setDeviceMode } = useDeviceMode();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const email = getCurrentUser()?.email ?? null;
 
   return (
     <header className="flex items-center justify-between px-6 py-4 bg-white/80 border-b border-slate-200 backdrop-blur-xl z-20 shrink-0 shadow-sm relative">
@@ -92,7 +101,37 @@ export function TopBar() {
            {isOnline ? "Online" : "Offline Test"}
         </button>
 
-        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-400 border border-black/5 shadow-sm"></div>
+        {/* 사용자 프로필 드롭다운 (이메일 · 설정 · 로그아웃) */}
+        <div className="relative shrink-0">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-400 border border-black/5 shadow-sm hover:ring-2 hover:ring-blue-200 transition"
+            title="계정"
+          />
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100">
+                  <div className="text-[11px] text-slate-400">로그인 계정</div>
+                  <div className="text-sm font-semibold text-slate-800 truncate">{email ?? '게스트'}</div>
+                </div>
+                <button
+                  onClick={() => { setMenuOpen(false); onNavigate('settings'); }}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  <Settings className="w-4 h-4 text-slate-500" /> 마이페이지 · 설정
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); onLogout(); }}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-rose-600 hover:bg-rose-50 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" /> 로그아웃
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </header>
   );
