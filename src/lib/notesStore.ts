@@ -259,6 +259,33 @@ export async function createNote(style: PaperStyle, title?: string): Promise<Not
   return note;
 }
 
+// 외부 파일(.ob)에서 가져온 노트를 새 노트로 저장. id는 새로 발급(덮어쓰기 방지),
+// 소유는 현재 계정, updatedAt=now로 최신화 → write-through로 클라우드에도 올라간다.
+export async function importNote(data: {
+  title?: string;
+  style?: PaperStyle;
+  strokes?: InkStroke[];
+  createdAt?: number;
+  thumbnail?: string;
+}): Promise<Note> {
+  const now = Date.now();
+  const note: Note = {
+    id: genId(),
+    title: data.title || '가져온 노트',
+    style: data.style || 'blank',
+    createdAt: data.createdAt || now,
+    updatedAt: now,
+    strokes: Array.isArray(data.strokes) ? data.strokes : [],
+    thumbnail: data.thumbnail,
+    user_id: currentUid(),
+    _dirty: true,
+  };
+  await run('readwrite', (s) => s.put(note));
+  void pushNote(note);
+  emitChange();
+  return note;
+}
+
 export async function saveNoteStrokes(
   id: string,
   strokes: InkStroke[],

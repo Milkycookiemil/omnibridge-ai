@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ViewState } from '../types';
 import { dummyData } from '../data';
-import { Play, Sparkles, Plus, FileText, AlertTriangle, Mic, Trash2, PenLine, Pencil } from 'lucide-react';
+import { Play, Sparkles, Plus, FileText, AlertTriangle, Mic, Trash2, PenLine, Pencil, Download, Upload, Cloud } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { listNotes, deleteNote, renameNote, onNotesChanged, type NoteMeta } from '../lib/notesStore';
+import { onUserChange, isGoogleConfigured, googleSignIn, getAccessToken } from '../lib/auth';
+import { exportNoteToFile, importNotesFromFile, exportNoteToDrive } from '../lib/exporter';
 import { NewNoteModal } from './NewNoteModal';
 
 interface DashboardViewProps {
@@ -17,12 +19,25 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [toast, setToast] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 2600);
+  };
 
   useEffect(() => {
-    listNotes().then(setNotes);
-    // 클라우드 pull로 로컬이 갱신되면(로그인 직후 등) 목록을 다시 그린다.
-    const off = onNotesChanged(() => listNotes().then(setNotes));
-    return off;
+    const refresh = () => listNotes().then(setNotes);
+    refresh();
+    // 클라우드 pull로 로컬이 갱신되거나(onNotesChanged), 앱 로드 직후 로그인 계정이
+    // 뒤늦게 확정/변경되면(onUserChange) 현재 계정 기준으로 목록을 다시 그린다.
+    const offNotes = onNotesChanged(refresh);
+    const offUser = onUserChange(refresh);
+    return () => {
+      offNotes();
+      offUser();
+    };
   }, []);
 
   const startRename = (e: React.MouseEvent, note: NoteMeta) => {
@@ -46,6 +61,43 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
     e.stopPropagation();
     await deleteNote(id);
     setNotes(await listNotes());
+  };
+
+  const handleExportNote = async (e: React.MouseEvent, note: NoteMeta) => {
+    e.stopPropagation();
+    try {
+      await exportNoteToFile(note.id);
+      showToast(`'${note.title}' 내보내기 완료 (.ob)`);
+    } catch (err) {
+      console.error(err);
+      showToast('내보내기에 실패했어요.');
+    }
+  };
+
+  const handleExportDrive = async (e: React.MouseEvent, note: NoteMeta) => {
+    e.stopPropagation();
+    try {
+      if (!(await getAccessToken())) await googleSignIn(); // 최초/만료 시 Drive 권한 팝업
+      await exportNoteToDrive(note.id);
+      showToast(`'${note.title}' Google Drive에 저장 완료`);
+    } catch (err) {
+      console.error(err);
+      showToast('Google Drive 저장에 실패했어요.');
+    }
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 같은 파일 다시 선택 가능하도록 리셋
+    if (!file) return;
+    try {
+      const created = await importNotesFromFile(file);
+      setNotes(await listNotes());
+      showToast(`노트 ${created.length}개를 가져왔어요.`);
+    } catch (err: any) {
+      console.error(err);
+      showToast(err?.message || '가져오기에 실패했어요.');
+    }
   };
 
   const formatDate = (ts: number) => {
@@ -74,6 +126,20 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
           >
             <Mic className="w-4 h-4" /> 빠른 녹음 시작
           </button>
+          <button
+            onClick={() => importInputRef.current?.click()}
+            className="border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 px-4 py-2 rounded-xl flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
+            title="다른 기기에서 내보낸 .ob 파일 가져오기"
+          >
+            <Upload className="w-4 h-4" /> 가져오기
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".ob,application/json"
+            hidden
+            onChange={handleImportFile}
+          />
           <button
             onClick={() => setIsNewNoteModalOpen(true)}
             className="bg-gradient-sync text-white flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl shadow-lg shadow-accent-blue/20 hover:opacity-90 transition-opacity"
@@ -191,6 +257,22 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
+                    onClick={(e) => handleExportNote(e, note)}
+                    className="w-7 h-7 rounded-lg bg-white/80 border border-slate-200 text-slate-400 hover:text-teal-500 hover:border-teal-200 flex items-center justify-center"
+                    title="내보내기 (.ob 파일)"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                  {isGoogleConfigured && (
+                    <button
+                      onClick={(e) => handleExportDrive(e, note)}
+                      className="w-7 h-7 rounded-lg bg-white/80 border border-slate-200 text-slate-400 hover:text-blue-500 hover:border-blue-200 flex items-center justify-center"
+                      title="Google Drive에 저장 (.ob)"
+                    >
+                      <Cloud className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button
                     onClick={(e) => handleDeleteNote(e, note.id)}
                     className="w-7 h-7 rounded-lg bg-white/80 border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 flex items-center justify-center"
                     title="노트 삭제"
@@ -230,6 +312,19 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
         onClose={() => setIsNewNoteModalOpen(false)}
         onNavigate={onNavigate}
       />
+
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg"
+          >
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

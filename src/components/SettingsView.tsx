@@ -9,6 +9,7 @@ import { cn } from '../lib/utils';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 
 import { googleSignIn, getAccessToken, logout, getCurrentUser } from '../lib/auth';
+import { exportAllNotesToFile } from '../lib/exporter';
 import { usePreferences } from '../lib/preferences';
 
 const DUMMY_DATA = {
@@ -69,8 +70,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout }) => {
   const [showEnergyToast, setShowEnergyToast] = useState(false);
   
   const [isSignedIn, setIsSignedIn] = useState(false);
-  
+
   const [showPermissionScreen, setShowPermissionScreen] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+
+  const handleExportAll = async () => {
+    try {
+      const count = await exportAllNotesToFile();
+      setExportMsg(count === 0 ? '내보낼 노트가 없어요.' : `노트 ${count}개를 .ob로 내보냈어요.`);
+    } catch (e) {
+      console.error(e);
+      setExportMsg('내보내기에 실패했어요.');
+    }
+    window.setTimeout(() => setExportMsg(null), 2600);
+  };
   
   useEffect(() => {
     getAccessToken().then(token => setIsSignedIn(!!token));
@@ -382,10 +395,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout }) => {
                      <div className="p-6 flex items-center justify-between bg-slate-50/50">
                         <div>
                          <h4 className="font-bold text-slate-800 mb-1">데이터 내보내기</h4>
-                         <p className="text-sm text-slate-500 font-medium">기기 간 완벽한 데이터 이동성 보장</p>
+                         <p className="text-sm text-slate-500 font-medium">
+                           {exportMsg ?? '모든 노트를 .ob 파일로 저장 — 기기 간 완벽한 데이터 이동성'}
+                         </p>
                        </div>
-                       <button className="whitespace-nowrap px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-sm hover:bg-slate-50 transition-colors shadow-sm">
-                         PDF / 원본 다중 포맷
+                       <button
+                         onClick={handleExportAll}
+                         className="whitespace-nowrap px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-sm hover:bg-slate-50 transition-colors shadow-sm"
+                       >
+                         전체 내보내기 (.ob)
                        </button>
                      </div>
                   </div>

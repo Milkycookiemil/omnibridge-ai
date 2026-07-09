@@ -182,7 +182,7 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 |---|---|---|---|
 | **1a** | 로컬 우선 실제 노트 CRUD (IndexedDB), 더미 제거 + 다중 노트 워크스페이스(탭/분할) | 없음 | ✅ **완료** |
 | **1b** | Supabase 저장 + 계정별 격리(RLS). 인증도 Supabase Auth로 통합(Path 2) | Supabase 프로젝트 | ✅ **완료** (4a·4b, 2계정 실측 검증) |
-| **1c** | Drive 선택적 내보내기 | (업로드 코드 존재) | ⬜ |
+| **1c** | 내보내기: 로컬 `.ob` 내보내기/가져오기 ✅ + Google Drive 업로드(코드 완성, ID 대기) | Drive용 Google OAuth Client ID | 🔄 로컬 ✅ / Drive 준비됨(비활성) |
 | **2** | 개인정보처리방침/이용약관 페이지, 보안 규칙, 실제 호스팅+도메인 | 도메인 | ⬜ |
 | **3** | Stripe 등 구독 결제 | 결제사 계정 | ⬜ |
 
@@ -196,6 +196,15 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 - `4ffdc8a` 새 노트 모달 공용화(`NewNoteModal`) — 홈·워크스페이스 동일
 - `fb24917` **1b-4a**: 인증을 Firebase→**Supabase Auth(이메일)**로 전환 + `supabase/schema.sql`(notes+RLS)
 - `51a4ee0` 로그아웃/프로필 드롭다운 + 설정 로그아웃 + 조건부 구독해지
+
+### 1c 진행 상황 (내보내기/가져오기) — 2026-07-09
+**결정(사용자): "둘 다" — 로컬 파일 먼저 + Drive 코드까지.**
+- ✅ **로컬 `.ob` 내보내기/가져오기 (검증됨)** — `src/lib/exporter.ts`. `.ob`=JSON(`{format,version,notes[]}`), 노트별/전체 내보내기 + 파일 가져오기(새 id 발급으로 덮어쓰기 방지, 현재 계정 소유로 저장 → write-through로 클라우드에도 동기화).
+  - UI: 대시보드 카드 hover에 **내보내기(Download)** 버튼, 헤더에 **가져오기(Upload)** 버튼, 설정 '데이터 내보내기'→**전체 내보내기(.ob)**.
+  - 실측 검증: 내보내기 blob 가로채 `.ob` 구조·strokes 확인 / 획 든 `.ob` 가져오기 → 새 노트 생성·획(`__marker`)·스타일 보존·`user_id`=현재계정·`_dirty:false`(Supabase 업로드 성공, Node로 행 확인).
+- 🔄 **Google Drive 업로드 (코드 완성, 비활성)** — `exportNoteToDrive` + `drive.ts` upload + `auth.ts` GIS 토큰(팝업, `drive.file` 스코프, 온디맨드). `VITE_GOOGLE_CLIENT_ID` 없으면 `isGoogleConfigured=false`로 카드의 Drive 버튼 미노출(죽은 버튼 방지). **활성화하려면**: Google Cloud에서 OAuth Client ID 발급 후 `.env.local`에 입력(`.env.example`에 절차 문서화). drive.file 스코프라 앱 심사 불필요.
+  - **미검증**: 실제 Drive 업로드는 Client ID가 없어 헤드리스 검증 불가(코드 경로만 확인). ID 준비 후 검증 필요.
+- **버그 수정(검증 중 발견)**: `listNotes`가 `currentUid()`로 필터하는데 앱 로드 직후 세션 확정 전 대시보드가 마운트되면 `uid=null`로 걸러져 **로그인 유저 노트가 빈 목록**으로 보이던 문제 → `auth.onUserChange` 구독으로 세션 확정/계정 변경 시 대시보드가 재조회하도록 수정(검증됨).
 
 ### 1b 진행 상황 (Supabase 클라우드 저장 + 계정별 격리)
 **인증 방식 결정 = Path 2 (Supabase Auth로 통합).** Firebase↔Supabase 서드파티 인증은 `role:authenticated` 커스텀 클레임(Firebase Cloud Function + Blaze 유료플랜) 필요라 부담 → 더 단순한 Supabase Auth로 전환. Firebase 코드/설정은 잔존(미사용, 이후 정리 가능).

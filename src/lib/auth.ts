@@ -8,6 +8,17 @@ import type { User } from '@supabase/supabase-js';
 // 현재 로그인 사용자 캐시 (onAuthStateChange로 갱신)
 let currentUser: User | null = null;
 
+// 로그인 사용자 변경 구독. listNotes 등 "현재 계정"에 의존하는 화면이, 앱 로드 직후
+// 세션이 뒤늦게 확정되거나 계정이 바뀔 때 다시 조회하도록 통지한다.
+type UserCb = (user: User | null) => void;
+const userListeners = new Set<UserCb>();
+export function onUserChange(cb: UserCb): () => void {
+  userListeners.add(cb);
+  return () => {
+    userListeners.delete(cb);
+  };
+}
+
 // Supabase 인증 에러 → 한국어 안내 문구.
 export const authErrorMessage = (err?: any): string => {
   const code = typeof err === 'string' ? err : err?.code;
@@ -54,6 +65,14 @@ export const initAuth = (
   // onAuthStateChange는 로드 직후 INITIAL_SESSION 이벤트로 현재 세션을 전달한다.
   const { data } = supabase.auth.onAuthStateChange((_event, session) => {
     currentUser = session?.user ?? null;
+    // 계정에 의존하는 화면들에 사용자 확정/변경을 통지 (목록 재조회 트리거)
+    userListeners.forEach((cb) => {
+      try {
+        cb(currentUser);
+      } catch {
+        /* 리스너 오류 무시 */
+      }
+    });
     if (session?.user) {
       onAuthSuccess?.(session.user, session.access_token ?? '');
     } else {
@@ -91,11 +110,70 @@ export const emailSignIn = async (email: string, password: string): Promise<User
 
 export const getCurrentUser = (): User | null => currentUser;
 
-// 이메일 모드에서는 Google Drive 접근 토큰이 없다. (Drive 연동은 이후 단계)
-export const getAccessToken = async (): Promise<string | null> => null;
+// ============================================================
+//  Google Drive 토큰 (1c 선택적 내보내기)
+//  신원(로그인)은 Supabase Auth가 담당하고, Drive 접근 토큰만 Google Identity
+//  Services 토큰 클라이언트(팝업)로 필요할 때 온디맨드로 받는다. drive.file 스코프라
+//  이 앱이 만든 파일에만 접근 → 민감 스코프가 아니라 앱 심사 없이도 동작한다.
+// ============================================================
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
-// 구글 로그인은 이후 단계에서 Supabase OAuth로 추가. 현재는 비활성(no-op).
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => null;
+// 클라이언트 ID가 있어야 Drive 내보내기 UI를 노출한다.
+export const isGoogleConfigured = Boolean(GOOGLE_CLIENT_ID);
+
+let driveToken: string | null = null;
+let gisPromise: Promise<void> | null = null;
+
+// Google Identity Services 스크립트를 1회 지연 로드.
+function loadGis(): Promise<void> {
+  if (gisPromise) return gisPromise;
+  gisPromise = new Promise((resolve, reject) => {
+    if ((window as any).google?.accounts?.oauth2) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.defer = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Google 스크립트 로드 실패'));
+    document.head.appendChild(s);
+  });
+  return gisPromise;
+}
+
+// Drive 접근 토큰을 팝업으로 요청. 성공 시 토큰을 캐시하고 반환.
+export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+  if (!GOOGLE_CLIENT_ID) return null;
+  await loadGis();
+  const google = (window as any).google;
+  return new Promise((resolve, reject) => {
+    try {
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: DRIVE_SCOPE,
+        callback: (resp: any) => {
+          if (resp?.access_token) {
+            driveToken = resp.access_token;
+            resolve({ user: currentUser as User, accessToken: resp.access_token });
+          } else {
+            reject(new Error(resp?.error || 'Drive 토큰을 받지 못했습니다.'));
+          }
+        },
+      });
+      client.requestAccessToken();
+    } catch (e) {
+      reject(e);
+    }
+  });
+};
+
+// 캐시된 Drive 토큰 반환. 없으면(미연결) null. 만료/최초에는 googleSignIn으로 재취득.
+export const getAccessToken = async (): Promise<string | null> => driveToken;
+
+// Drive 연결 해제(토큰 폐기). 신원 로그아웃과 별개.
+export const googleDisconnect = () => {
+  driveToken = null;
+};
 
 export const logout = async () => {
   if (supabase) await supabase.auth.signOut();
