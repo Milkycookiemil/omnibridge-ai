@@ -3,7 +3,7 @@ import { ViewState } from '../types';
 import { dummyData } from '../data';
 import { Play, Sparkles, Plus, FileText, AlertTriangle, Mic, Trash2, PenLine, Pencil } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { listNotes, deleteNote, renameNote, type NoteMeta } from '../lib/notesStore';
+import { listNotes, deleteNote, renameNote, onNotesChanged, type NoteMeta } from '../lib/notesStore';
 import { NewNoteModal } from './NewNoteModal';
 
 interface DashboardViewProps {
@@ -20,6 +20,9 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
 
   useEffect(() => {
     listNotes().then(setNotes);
+    // 클라우드 pull로 로컬이 갱신되면(로그인 직후 등) 목록을 다시 그린다.
+    const off = onNotesChanged(() => listNotes().then(setNotes));
+    return off;
   }, []);
 
   const startRename = (e: React.MouseEvent, note: NoteMeta) => {

@@ -173,15 +173,15 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 - ✅ **다중 노트 워크스페이스** — 포토샵식 탭 + 좌우 2분할 + 크롬식 `+` 팝업(노트 열기/새 노트). 꽉찬 레이아웃.
 - ✅ 인증 · 필기 엔진(펜 5종/레이어/획·영역 지우개) · 온디바이스 Whisper 전사.
 - ❌ AI 요약 카드 = 더미 (실 LLM 아님).
-- ❌ **기기 간 동기화·클라우드 저장 없음** — 노트는 현재 브라우저 IndexedDB에만. 계정별 격리도 로컬은 없음(같은 브라우저 공유). Drive는 업로드만, 읽기 없음.
-- 🟡 Supabase = **인증(Auth) 사용 중** + Realtime 브로드캐스트. 노트 DB 영속(4b)은 아직 미구현.
+- ✅ **노트 클라우드 저장 + 계정별 격리(4b)** — 손필기 노트가 Supabase `notes`에 계정별로 저장됨(로컬 IndexedDB는 오프라인 캐시). 다른 기기/브라우저에서 같은 계정 로그인 시 노트 복원. 2계정 실측 검증됨. (Drive는 여전히 업로드만, 읽기 없음)
+- 🟡 Supabase = **인증(Auth) + 노트 DB 영속(4b)** 사용 중 + Realtime 브로드캐스트. 단, PDF/캡쳐 노트는 아직 클라우드 미영속(빈 노트만).
 - ⚠️ PDF/캡쳐 노트는 비영속(임시 뷰). PDF 필기는 페이지 로컬 상태.
 
 ### 제품화 로드맵
 | 단계 | 내용 | 외부 준비물 | 상태 |
 |---|---|---|---|
 | **1a** | 로컬 우선 실제 노트 CRUD (IndexedDB), 더미 제거 + 다중 노트 워크스페이스(탭/분할) | 없음 | ✅ **완료** |
-| **1b** | Supabase 저장 + 계정별 격리(RLS). 인증도 Supabase Auth로 통합(Path 2) | Supabase 프로젝트 | 🔄 진행 중 (4a ✅ / 4b 남음) |
+| **1b** | Supabase 저장 + 계정별 격리(RLS). 인증도 Supabase Auth로 통합(Path 2) | Supabase 프로젝트 | ✅ **완료** (4a·4b, 2계정 실측 검증) |
 | **1c** | Drive 선택적 내보내기 | (업로드 코드 존재) | ⬜ |
 | **2** | 개인정보처리방침/이용약관 페이지, 보안 규칙, 실제 호스팅+도메인 | 도메인 | ⬜ |
 | **3** | Stripe 등 구독 결제 | 결제사 계정 | ⬜ |
@@ -201,7 +201,13 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 **인증 방식 결정 = Path 2 (Supabase Auth로 통합).** Firebase↔Supabase 서드파티 인증은 `role:authenticated` 커스텀 클레임(Firebase Cloud Function + Blaze 유료플랜) 필요라 부담 → 더 단순한 Supabase Auth로 전환. Firebase 코드/설정은 잔존(미사용, 이후 정리 가능).
 
 - ✅ **4a 완료** (`fb24917`, `51a4ee0`): 인증을 Supabase Auth(이메일)로 교체. 세션 자동유지·자동로그인, 로그인 화면 구글 버튼 제거, 상단 프로필 드롭다운·설정 로그아웃. Google/Drive는 현재 비활성(no-op, 이후 추가).
-- ⬜ **4b 남음**: `notesStore`(IndexedDB)를 Supabase `notes` 테이블과 동기화(로컬=오프라인 캐시), RLS `auth.uid()`로 계정별 격리.
+- ✅ **4b 완료·검증됨**: `notesStore`가 로컬(IndexedDB)=오프라인 캐시 + Supabase `notes`=진실의 원천 구조로 확장.
+  - **계정 스코프**: 노트에 `user_id` 부여, `listNotes`가 현재 로그인 계정 노트만 반환(같은 브라우저 계정 격리).
+  - **낙관적 write-through**: 로컬 즉시 저장 → 백그라운드 Supabase upsert. 실패/오프라인이면 `_dirty` 플래그로 남겨 재로그인·`online` 이벤트 시 재전송(`syncNotesFromCloud`).
+  - **LWW 머지**: 로그인 시(`App.tsx onAuthSuccess`) 원격 pull → `updated_at` 최신 우선 병합. `onNotesChanged` 구독으로 대시보드 자동 갱신.
+  - **결정(사용자)**: 동기화=즉시 write-through / 충돌=Last-Write-Wins.
+  - **실측 검증(2계정, 실 Supabase)**: ①a가 만든 노트가 Supabase에 업로드(`_dirty→false`, Node로 행 확인) ②RLS로 a 세션은 a 노트만 조회 ③b 대시보드에 a 노트 안 보임(앱 스코프 격리) ④빈 IDB(기기 교체 시뮬)에서 a 재로그인 시 Supabase에서 노트 복원.
+  - **알려진 한계**: 게스트(`user_id:null`)로 만든 노트는 로그인 후 계정으로 자동 이관 안 됨(후속). 오프라인 중 삭제는 tombstone 미구현이라 다음 pull에서 되돌아올 수 있음.
 
 **환경/설정 (사용자 소유):**
 - Supabase 프로젝트 `wegzchfcbcfuzggwpxft`, 키는 `.env.local`(git 제외). dev 서버 재시작 필요.

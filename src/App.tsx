@@ -16,6 +16,7 @@ import { SettingsView } from './components/SettingsView';
 import { AnimatePresence, motion } from 'motion/react';
 
 import { initAuth, logout } from './lib/auth';
+import { syncNotesFromCloud } from './lib/notesStore';
 import { LoginView } from './components/onboarding/LoginView';
 import { OnboardingPermissions } from './components/onboarding/OnboardingPermissions';
 
@@ -53,6 +54,9 @@ export default function App() {
         resolved = true;
         localStorage.removeItem(GUEST_KEY);
         setStage(isOnboardingDone() ? 'app' : 'onboarding');
+        // 로그인 확정 → 이 계정의 노트를 클라우드에서 내려받아 로컬과 병합(LWW).
+        // 실패해도 로컬 캐시로 계속 동작하므로 무시 가능.
+        void syncNotesFromCloud();
       },
       resolveSignedOut
     );

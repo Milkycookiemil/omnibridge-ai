@@ -1,14 +1,15 @@
 -- ============================================================
---  OmniBridge AI — Supabase 스키마 (1b)
+--  OmniBridge AI — Supabase 스키마 (1b-4b)
 --  notes 테이블: 손필기 노트 클라우드 저장 + 계정별 격리(RLS)
 --  실행: Supabase 대시보드 → SQL Editor → New query → 붙여넣기 → Run
---  전제: Firebase 서드파티 인증 연동(③) 후 RLS가 실제로 동작한다.
---        (auth.jwt()->>'sub' = Firebase UID)
+--  인증 = Supabase Auth. 로그인 사용자의 JWT `sub` 클레임 = auth.uid()(=user.id)이며,
+--        RLS가 (auth.jwt()->>'sub' = user_id)로 본인 노트만 통과시킨다.
+--        notesStore가 저장하는 user_id = getCurrentUser().id = 이 sub 값과 동일.
 -- ============================================================
 
 create table if not exists public.notes (
   id          text    primary key,               -- 클라이언트가 만든 note id (기존 notesStore와 동일)
-  user_id     text    not null,                  -- Firebase UID
+  user_id     text    not null,                  -- Supabase Auth user.id (JWT sub)
   title       text    not null,
   style       text    not null default 'blank',
   strokes     jsonb   not null default '[]'::jsonb,
@@ -20,7 +21,7 @@ create table if not exists public.notes (
 -- 행 레벨 보안 활성화 (자동 RLS가 켜져 있어도 명시적으로 이중 보장)
 alter table public.notes enable row level security;
 
--- 본인 노트만 접근 (Firebase UID = auth.jwt()->>'sub')
+-- 본인 노트만 접근 (Supabase Auth user.id = auth.jwt()->>'sub')
 drop policy if exists "notes_select_own" on public.notes;
 drop policy if exists "notes_insert_own" on public.notes;
 drop policy if exists "notes_update_own" on public.notes;
