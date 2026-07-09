@@ -19,6 +19,7 @@ import type { InkDelta } from '../lib/inkEngine';
 import { getNote, saveNoteStrokes } from '../lib/notesStore';
 import { usePreferences } from '../lib/preferences';
 import { useDeviceMode } from '../lib/deviceMode';
+import { summarizeTranscript, isAiSummaryConfigured } from '../lib/aiSummary';
 
 export function LiveNoteView({ navContext }: { navContext?: any }) {
   const { pushDelta } = useSyncEngine();
@@ -67,40 +68,62 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
 
+  // 녹음 경과 시간 타이머 + 정지 시 요약 초기화
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
-    let cardInterval: ReturnType<typeof setInterval>;
-
     if (isRecording) {
-      interval = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-
-      // Reveal a new card every 4 seconds for demo purposes
-      let cardIndex = 0;
-      cardInterval = setInterval(() => {
-        const nextCard = dummyData.summaryCards[cardIndex];
-        if (nextCard) {
-          setVisibleCards(prev => [...prev, nextCard]);
-          // 사용자가 알림을 영구 차단한 경우 일정 감지 스낵바를 띄우지 않는다.
-          if (cardIndex === 2 && usePreferences.getState().notificationsEnabled) {
-            setShowTask(true);
-            setTimeout(() => setShowTask(false), 5000);
-          }
-          cardIndex++;
-        } else {
-          clearInterval(cardInterval);
-        }
-      }, 4000);
+      interval = setInterval(() => setRecordingTime((prev) => prev + 1), 1000);
     } else {
       setRecordingTime(0);
       setVisibleCards([]);
       setShowTask(false);
     }
+    return () => clearInterval(interval);
+  }, [isRecording]);
 
+  // 최신 전사/시간을 interval 콜백에서 읽기 위한 ref
+  const linesRef = useRef(transcription.lines);
+  linesRef.current = transcription.lines;
+  const recordingTimeRef = useRef(recordingTime);
+  recordingTimeRef.current = recordingTime;
+
+  // 실시간 AI 요약 (BYOK). 녹음 중이고 키가 설정돼 있으면 전사 텍스트를 주기적으로 Claude로
+  // 요약해 카드로 표시. 키가 없으면 안내 카드, 실패 시 오류 카드.
+  useEffect(() => {
+    if (!isRecording) return;
+    if (!isAiSummaryConfigured()) {
+      setVisibleCards([
+        { time: '설정 필요', text: 'AI 요약을 켜려면 설정 → AI 엔진에서 Claude API 키를 입력하세요.', inkGroupId: '', timestamp: 0 },
+      ]);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const run = async () => {
+      const text = linesRef.current.map((l) => l.text).join(' ').trim();
+      if (text.length < 20) return; // 전사가 너무 짧으면 아직 요약하지 않음
+      try {
+        const points = await summarizeTranscript(text, { signal: controller.signal });
+        if (cancelled || points.length === 0) return;
+        const t = recordingTimeRef.current;
+        const label = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+        setVisibleCards(points.map((p) => ({ time: label, text: p, inkGroupId: '', timestamp: t })));
+      } catch (e) {
+        if (cancelled || (e as any)?.name === 'AbortError') return;
+        console.warn('AI 요약 실패:', e);
+        setVisibleCards([{ time: '오류', text: (e as Error).message || 'AI 요약에 실패했어요.', inkGroupId: '', timestamp: 0 }]);
+      }
+    };
+
+    const first = setTimeout(run, 6000); // 첫 요약은 6초 후
+    const id = setInterval(run, 20000); // 이후 20초마다 갱신
     return () => {
-      clearInterval(interval);
-      clearInterval(cardInterval);
+      cancelled = true;
+      controller.abort();
+      clearTimeout(first);
+      clearInterval(id);
     };
   }, [isRecording]);
 

@@ -10,6 +10,10 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 
 import { googleSignIn, getAccessToken, logout, getCurrentUser } from '../lib/auth';
 import { exportAllNotesToFile } from '../lib/exporter';
+import {
+  getAnthropicKey, setAnthropicKey, getSummaryModel, setSummaryModel,
+  summarizeTranscript, SUMMARY_MODELS,
+} from '../lib/aiSummary';
 import { usePreferences } from '../lib/preferences';
 
 const DUMMY_DATA = {
@@ -73,6 +77,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout }) => {
 
   const [showPermissionScreen, setShowPermissionScreen] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+
+  // AI 요약 BYOK 설정 상태
+  const [apiKeyInput, setApiKeyInput] = useState(getAnthropicKey());
+  const [summaryModel, setSummaryModelState] = useState(getSummaryModel());
+  const [keySaved, setKeySaved] = useState(false);
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const handleSaveKey = () => {
+    setAnthropicKey(apiKeyInput);
+    setKeySaved(true);
+    window.setTimeout(() => setKeySaved(false), 2000);
+  };
+
+  const handleModelChange = (m: string) => {
+    setSummaryModelState(m);
+    setSummaryModel(m);
+  };
+
+  const handleTestKey = async () => {
+    setAnthropicKey(apiKeyInput); // 테스트 전 현재 입력값 저장
+    setTesting(true);
+    setTestMsg(null);
+    try {
+      const pts = await summarizeTranscript('오늘 강의에서는 손익분기점과 고정비, 변동비의 개념을 다뤘다.');
+      setTestMsg(pts.length ? '연결 성공 — 요약이 정상 생성됩니다.' : '응답은 왔지만 요약이 비어 있어요.');
+    } catch (e) {
+      setTestMsg((e as Error).message || '테스트에 실패했어요.');
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleExportAll = async () => {
     try {
@@ -413,6 +449,58 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout }) => {
               {/* === 3. AI ENGINE === */}
               {activeGroup === 'ai' && (
                 <div className="space-y-8">
+                  {/* AI 요약 (BYOK) — 사용자 본인 Claude API 키 */}
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                     <div className="flex items-center gap-2 mb-1">
+                       <Sparkles className="w-4 h-4 text-violet-600" />
+                       <h5 className="font-bold text-sm text-slate-800">AI 요약 (Claude · 내 키 사용)</h5>
+                     </div>
+                     <p className="text-sm text-slate-500 font-medium mb-4 leading-relaxed">
+                       녹음 중 실시간 전사 내용을 Claude가 요약합니다. 본인 Anthropic API 키를 입력하면
+                       브라우저에만 저장되며 요약 비용은 본인 키로 청구됩니다.{' '}
+                       <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer" className="text-violet-600 underline">키 발급받기</a>
+                     </p>
+
+                     <label className="block text-xs font-bold text-slate-500 mb-1.5">API 키</label>
+                     <div className="flex gap-2 mb-4">
+                       <input
+                         type="password"
+                         value={apiKeyInput}
+                         onChange={(e) => setApiKeyInput(e.target.value)}
+                         placeholder="sk-ant-..."
+                         className="flex-1 min-w-0 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-violet-500/30"
+                       />
+                       <button
+                         onClick={handleSaveKey}
+                         className="whitespace-nowrap px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-sm hover:bg-violet-700 transition-colors"
+                       >
+                         {keySaved ? '저장됨 ✓' : '저장'}
+                       </button>
+                       <button
+                         onClick={handleTestKey}
+                         disabled={testing || !apiKeyInput.trim()}
+                         className="whitespace-nowrap px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-sm hover:bg-slate-50 transition-colors disabled:opacity-50"
+                       >
+                         {testing ? '테스트 중…' : '테스트'}
+                       </button>
+                     </div>
+
+                     <label className="block text-xs font-bold text-slate-500 mb-1.5">요약 모델</label>
+                     <select
+                       value={summaryModel}
+                       onChange={(e) => handleModelChange(e.target.value)}
+                       className="w-full bg-slate-50 border border-slate-200 font-medium text-sm text-slate-800 rounded-lg py-2 px-3 outline-none focus:ring-2 focus:ring-violet-500/30"
+                     >
+                       {SUMMARY_MODELS.map((m) => (
+                         <option key={m.id} value={m.id}>{m.label}</option>
+                       ))}
+                     </select>
+
+                     {testMsg && (
+                       <p className="text-sm mt-3 font-medium text-slate-600">{testMsg}</p>
+                     )}
+                  </div>
+
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                      <h5 className="font-bold text-sm text-slate-400 uppercase tracking-wider mb-4">하이브리드 AI 모드</h5>
                      <div className="flex bg-slate-100 p-1.5 rounded-xl">

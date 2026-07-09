@@ -172,7 +172,7 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 - ✅ **손필기 노트가 실제로 영속 저장됨** — IndexedDB(`notesStore`), 노트별 `InkStroke[]`. 대시보드 목록·생성·열기·삭제·이름변경 실제 동작(더미 제거).
 - ✅ **다중 노트 워크스페이스** — 포토샵식 탭 + 좌우 2분할 + 크롬식 `+` 팝업(노트 열기/새 노트). 꽉찬 레이아웃.
 - ✅ 인증 · 필기 엔진(펜 5종/레이어/획·영역 지우개) · 온디바이스 Whisper 전사.
-- ❌ AI 요약 카드 = 더미 (실 LLM 아님).
+- ✅ **AI 요약 = 실 Claude 연동(BYOK)** — 사용자 본인 키로 전사 텍스트를 실시간 요약(더미 제거). 요청 경로(CORS·엔드포인트·헤더)는 검증됨, 유효 키로의 생성은 사용자 키 필요.
 - ✅ **노트 클라우드 저장 + 계정별 격리(4b)** — 손필기 노트가 Supabase `notes`에 계정별로 저장됨(로컬 IndexedDB는 오프라인 캐시). 다른 기기/브라우저에서 같은 계정 로그인 시 노트 복원. 2계정 실측 검증됨. (Drive는 여전히 업로드만, 읽기 없음)
 - 🟡 Supabase = **인증(Auth) + 노트 DB 영속(4b)** 사용 중 + Realtime 브로드캐스트. 단, PDF/캡쳐 노트는 아직 클라우드 미영속(빈 노트만).
 - ⚠️ PDF/캡쳐 노트는 비영속(임시 뷰). PDF 필기는 페이지 로컬 상태.
@@ -196,6 +196,15 @@ VITE_SUPABASE_ANON_KEY="<anon-public-key>"
 - `4ffdc8a` 새 노트 모달 공용화(`NewNoteModal`) — 홈·워크스페이스 동일
 - `fb24917` **1b-4a**: 인증을 Firebase→**Supabase Auth(이메일)**로 전환 + `supabase/schema.sql`(notes+RLS)
 - `51a4ee0` 로그아웃/프로필 드롭다운 + 설정 로그아웃 + 조건부 구독해지
+
+### AI 요약 실연동 (BYOK) — 2026-07-09
+**결정(사용자): "AI 요약 진짜로" + 키 방식 = BYOK(사용자 자기 키).** 간판 기능이던 "AI 요약 카드"가 더미(4초마다 `dummyData.summaryCards`)였던 걸 실제 Claude 요약으로 교체.
+- **`src/lib/aiSummary.ts`** — 사용자 본인 Anthropic API 키를 설정에서 입력→localStorage 저장(BYOK, 키가 본인 소유라 노출 위험 없음·BYOS 철학과 동일). 브라우저에서 Messages API 직접 호출(`anthropic-dangerous-direct-browser-access`). SDK 미설치(번들 경량화·CLAUDE.md "불필요한 의존성 금지")로 `fetch` 사용.
+- **모델 선택** — Haiku 4.5(기본, 빠름·저렴) / Sonnet 5 / Opus 4.8. 요약은 고빈도라 Haiku 기본, 비용은 사용자 부담이므로 모델 선택권을 사용자에게 노출(claude-api 스킬 지침 "비용은 사용자 결정").
+- **`SettingsView` AI 엔진** — 키 입력(password)·저장·**테스트** 버튼 + 모델 드롭다운.
+- **`LiveNoteView`** — 더미 카드 타이머 제거. 녹음 중 전사(`transcription.lines`)를 6초 후 첫 요약 + 이후 20초마다 Claude로 요약해 카드 갱신. 키 없으면 "설정 필요" 안내 카드, 실패 시 오류 카드.
+- **검증**: 설정 UI 렌더(키/모델/버튼) 확인 / 키 미설정 시 안내 카드·더미 제거 확인 / **가짜 키 테스트 → `OPTIONS 200`(CORS 프리플라이트) + `POST 401`**(Anthropic 실제 도달·엔드포인트·헤더·CORS 정상) 네트워크 로그로 확인. tsc 0에러·build 통과.
+- **미검증**: 유효 키로의 실제 요약 생성(사용자 유료 키 필요 — Drive와 동일한 정직한 경계).
 
 ### 1c 진행 상황 (내보내기/가져오기) — 2026-07-09
 **결정(사용자): "둘 다" — 로컬 파일 먼저 + Drive 코드까지.**
