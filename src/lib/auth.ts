@@ -1,108 +1,103 @@
-import { initializeApp } from 'firebase/app';
-import {
-  getAuth,
-  signInWithPopup,
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  setPersistence,
-  browserLocalPersistence,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  User,
-} from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+// src/lib/auth.ts
+// 인증 = Supabase Auth (이메일/비밀번호). 세션은 supabase 클라이언트가 브라우저에
+// 유지하므로 새로고침/재방문 시 자동 로그인된다. RLS는 auth.uid()(=세션 user.id)로
+// 계정별 격리한다. (구글 로그인/Drive 연동은 이후 단계에서 추가)
+import { supabase, isSupabaseConfigured } from './supabase';
+import type { User } from '@supabase/supabase-js';
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+// 현재 로그인 사용자 캐시 (onAuthStateChange로 갱신)
+let currentUser: User | null = null;
 
-// 세션을 브라우저 로컬에 영속화 → 한 번 로그인하면 새로고침/재방문에도 자동 로그인.
-// (웹 SDK 기본값도 local이지만 명시적으로 보장한다.)
-setPersistence(auth, browserLocalPersistence).catch((e) =>
-  console.warn('auth persistence 설정 실패:', e)
-);
+// Supabase 인증 에러 → 한국어 안내 문구.
+export const authErrorMessage = (err?: any): string => {
+  const code = typeof err === 'string' ? err : err?.code;
+  const msg = (typeof err === 'string' ? '' : err?.message ?? '').toLowerCase();
 
-const provider = new GoogleAuthProvider();
-// Request Workspace scopes (BYOS: 사용자 본인 Drive 저장용)
-provider.addScope('https://www.googleapis.com/auth/drive.file');
-provider.addScope('https://www.googleapis.com/auth/userinfo.profile');
-provider.addScope('https://www.googleapis.com/auth/userinfo.email');
-
-// Drive 접근 토큰(OAuth)은 메모리에만 캐시한다. 새로고침하면 사라지므로
-// 실제 저장이 필요한 시점에 없으면 재요청한다. 신원(로그인)과는 분리됐다.
-let cachedAccessToken: string | null = null;
-
-// Firebase 인증 에러 코드를 한국어 안내 문구로 변환.
-export const authErrorMessage = (code?: string): string => {
   switch (code) {
-    case 'auth/invalid-email':
-      return '이메일 형식이 올바르지 않습니다.';
-    case 'auth/user-disabled':
-      return '비활성화된 계정입니다.';
-    case 'auth/user-not-found':
-    case 'auth/wrong-password':
-    case 'auth/invalid-credential':
+    case 'invalid_credentials':
       return '이메일 또는 비밀번호가 올바르지 않습니다.';
-    case 'auth/email-already-in-use':
+    case 'user_already_exists':
+    case 'email_exists':
       return '이미 가입된 이메일입니다. 로그인해 주세요.';
-    case 'auth/weak-password':
+    case 'weak_password':
       return '비밀번호는 6자 이상이어야 합니다.';
-    case 'auth/operation-not-allowed':
-      return '이메일/비밀번호 로그인이 아직 활성화되지 않았습니다. (Firebase 콘솔 → Authentication → Sign-in method에서 설정 필요)';
-    case 'auth/configuration-not-found':
-      return 'Firebase 인증이 아직 초기화되지 않았습니다. (Firebase 콘솔 → Authentication → 시작하기 필요)';
-    case 'auth/popup-blocked':
-    case 'auth/cancelled-popup-request':
-      return '';
-    default:
-      return '인증 중 문제가 발생했습니다. 다시 시도해 주세요.';
+    case 'email_not_confirmed':
+      return '이메일 확인이 필요합니다. 메일의 링크를 클릭한 뒤 로그인해 주세요.';
+    case 'email_not_confirmed_signup':
+      return typeof err === 'object' && err?.message ? err.message : '확인 메일을 보냈습니다.';
+    case 'over_email_send_rate_limit':
+    case 'over_request_rate_limit':
+      return '요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.';
+    case 'validation_failed':
+      return '입력값을 확인해 주세요.';
   }
+
+  // 코드가 없을 때 메시지 기반 폴백
+  if (msg.includes('invalid login')) return '이메일 또는 비밀번호가 올바르지 않습니다.';
+  if (msg.includes('already registered') || msg.includes('already been registered'))
+    return '이미 가입된 이메일입니다. 로그인해 주세요.';
+  if (msg.includes('password should be at least')) return '비밀번호는 6자 이상이어야 합니다.';
+  if (msg.includes('email not confirmed')) return '이메일 확인이 필요합니다. 메일의 링크를 클릭한 뒤 로그인해 주세요.';
+  if (!isSupabaseConfigured) return 'Supabase 키가 설정되지 않았습니다. (.env.local 확인)';
+  return '인증 중 문제가 발생했습니다. 다시 시도해 주세요.';
 };
 
-// 앱 로드 시 1회 호출. 리다이렉트 복귀 결과를 흡수하고, 인증 상태를 구독한다.
-// user가 있으면(구글이든 이메일이든) onAuthSuccess가 호출된다.
+// 앱 로드 시 1회 호출. 현재 세션을 즉시 반영하고, 이후 로그인/로그아웃을 구독한다.
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  return onAuthStateChanged(auth, (user: User | null) => {
-    if (user) {
-      if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken ?? '');
+  if (!supabase) {
+    onAuthFailure?.();
+    return () => {};
+  }
+  // onAuthStateChange는 로드 직후 INITIAL_SESSION 이벤트로 현재 세션을 전달한다.
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    currentUser = session?.user ?? null;
+    if (session?.user) {
+      onAuthSuccess?.(session.user, session.access_token ?? '');
     } else {
-      cachedAccessToken = null;
-      if (onAuthFailure) onAuthFailure();
+      onAuthFailure?.();
     }
   });
+  return () => data.subscription.unsubscribe();
 };
 
-// 구글 로그인 — 팝업 방식. (실 브라우저의 사용자 클릭에서 팝업은 차단되지 않으며,
-// localhost ↔ firebaseapp.com 교차 도메인 저장소 차단으로 리다이렉트가 실패하는 문제를 피한다.)
-// Drive 접근 토큰을 즉시 회수해 캐시한다 → BYOS(내 Drive 노트 접근)에 사용.
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
-  const result = await signInWithPopup(auth, provider);
-  const credential = GoogleAuthProvider.credentialFromResult(result);
-  if (credential?.accessToken) cachedAccessToken = credential.accessToken;
-  return { user: result.user, accessToken: cachedAccessToken ?? '' };
+// 이메일/비밀번호 회원가입. Confirm email이 켜져 있으면 세션이 없이 확인 메일이 발송된다.
+export const emailSignUp = async (email: string, password: string): Promise<User | null> => {
+  if (!supabase) throw new Error('supabase 미설정');
+  const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
+  if (error) throw error;
+  if (!data.session) {
+    // 확인 메일 모드 → 자동 로그인 안 됨. LoginView가 안내하도록 특수 에러로 알림.
+    throw {
+      code: 'email_not_confirmed_signup',
+      message: '확인 메일을 보냈습니다. 메일의 링크를 누른 뒤 로그인하세요. (또는 Supabase에서 Confirm email 끄기)',
+    };
+  }
+  return data.user;
 };
 
 // 이메일/비밀번호 로그인.
-export const emailSignIn = async (email: string, password: string): Promise<User> => {
-  const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
-  return cred.user;
+export const emailSignIn = async (email: string, password: string): Promise<User | null> => {
+  if (!supabase) throw new Error('supabase 미설정');
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+  if (error) throw error;
+  return data.user;
 };
 
-// 이메일/비밀번호 회원가입.
-export const emailSignUp = async (email: string, password: string): Promise<User> => {
-  const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-  return cred.user;
-};
+export const getCurrentUser = (): User | null => currentUser;
 
-export const getCurrentUser = (): User | null => auth.currentUser;
+// 이메일 모드에서는 Google Drive 접근 토큰이 없다. (Drive 연동은 이후 단계)
+export const getAccessToken = async (): Promise<string | null> => null;
 
-export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
-};
+// 구글 로그인은 이후 단계에서 Supabase OAuth로 추가. 현재는 비활성(no-op).
+export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => null;
 
 export const logout = async () => {
-  await auth.signOut();
-  cachedAccessToken = null;
+  if (supabase) await supabase.auth.signOut();
+  currentUser = null;
 };

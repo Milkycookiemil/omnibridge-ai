@@ -1,24 +1,12 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ShieldCheck, Cloud, Zap, Loader2, Mail, Lock } from 'lucide-react';
-import { googleSignIn, emailSignIn, emailSignUp, authErrorMessage } from '../../lib/auth';
+import { emailSignIn, emailSignUp, authErrorMessage } from '../../lib/auth';
 
 interface LoginViewProps {
   // 게스트로 둘러보기 (실계정 없이 진입). 실계정 로그인/회원가입 성공은
-  // App의 onAuthStateChanged 리스너가 자동으로 화면을 전환한다.
+  // App의 인증 리스너가 자동으로 화면을 전환한다.
   onGuest: () => void;
-}
-
-// Inline Google "G" mark so login button reads as an official entry point.
-function GoogleMark() {
-  return (
-    <svg className="w-5 h-5" viewBox="0 0 48 48" aria-hidden="true">
-      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-    </svg>
-  );
 }
 
 const TRUST_SIGNALS = [
@@ -34,21 +22,7 @@ export function LoginView({ onGuest }: LoginViewProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const handleGoogleLogin = async () => {
-    setError(null);
-    setGoogleLoading(true);
-    try {
-      // 리다이렉트로 구글로 이동 → 복귀 후 App 리스너가 처리. (팝업 차단 무관)
-      await googleSignIn();
-    } catch (e: any) {
-      const msg = authErrorMessage(e?.code);
-      if (msg) setError(msg);
-      setGoogleLoading(false);
-    }
-  };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,7 +40,7 @@ export function LoginView({ onGuest }: LoginViewProps) {
         await emailSignIn(email, password);
       }
     } catch (err: any) {
-      setError(authErrorMessage(err?.code));
+      setError(authErrorMessage(err));
       setLoading(false);
     }
   };
@@ -76,7 +50,7 @@ export function LoginView({ onGuest }: LoginViewProps) {
     setMode((m) => (m === 'login' ? 'signup' : 'login'));
   };
 
-  const busy = loading || googleLoading;
+  const busy = loading;
 
   return (
     <div className="h-screen w-full flex flex-col md:flex-row bg-[#F4F5F7] text-slate-800 overflow-hidden">
@@ -142,7 +116,7 @@ export function LoginView({ onGuest }: LoginViewProps) {
           </h2>
           <p className="text-slate-500 text-sm font-medium mb-6">
             {mode === 'login'
-              ? '이메일 또는 구글 계정으로 시작하세요.'
+              ? '이메일로 로그인하세요.'
               : '이메일로 새 계정을 만들어 시작하세요.'}
           </p>
 
@@ -213,25 +187,16 @@ export function LoginView({ onGuest }: LoginViewProps) {
           </div>
 
           <button
-            onClick={handleGoogleLogin}
-            disabled={busy}
-            className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 shadow-sm hover:bg-slate-50 hover:border-slate-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {googleLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <GoogleMark />}
-            {googleLoading ? '구글로 이동 중...' : 'Google 계정으로 시작'}
-          </button>
-
-          <button
             onClick={onGuest}
             disabled={busy}
-            className="mt-3 w-full py-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-600 text-sm transition-colors disabled:opacity-60"
+            className="w-full py-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-600 text-sm transition-colors disabled:opacity-60"
           >
             게스트로 둘러보기
           </button>
 
           <p className="mt-8 text-center text-xs text-slate-400 leading-relaxed">
             계속 진행하면 서비스 약관 및 개인정보 처리방침에 동의하게 됩니다.<br />
-            필기 데이터는 사용자 본인의 Google Drive에만 저장됩니다.
+            필기 데이터는 안전하게 클라우드에 동기화됩니다.
           </p>
         </motion.div>
       </div>

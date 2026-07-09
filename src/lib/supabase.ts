@@ -11,7 +11,8 @@ export const isSupabaseConfigured = Boolean(url && anonKey);
 export const supabase: SupabaseClient | null = isSupabaseConfigured
   ? createClient(url!, anonKey!, {
       realtime: { params: { eventsPerSecond: 40 } },
-      auth: { persistSession: false },
+      // 로그인 세션을 브라우저에 유지 → 새로고침/재방문 시 자동 로그인.
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     })
   : null;
 
