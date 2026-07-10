@@ -25,6 +25,8 @@ create table if not exists public.notes (
 --    저장이 실패한다(로컬은 보존). 이 마이그레이션을 반드시 먼저 실행할 것.
 alter table public.notes add column if not exists deleted    boolean not null default false;
 alter table public.notes add column if not exists deleted_at bigint;
+-- PDF 노트: 페이지별 필기(jsonb). 원본 PDF 파일은 Storage(note-files 버킷)에 별도 저장.
+alter table public.notes add column if not exists pdf_pages  jsonb;
 
 -- 행 레벨 보안 활성화 (자동 RLS가 켜져 있어도 명시적으로 이중 보장)
 alter table public.notes enable row level security;

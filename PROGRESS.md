@@ -17,7 +17,18 @@
 
 **동기화 완성도 마무리 (2026-07-10 세션) — 완료·검증:**
 - `d07e5e7` **게스트→로그인 노트 이관** — 로그인 시 게스트(user_id null) 노트를 현재 계정으로 귀속+업로드. 2계정 실측.
-- (커밋 대기 중 → 이 커밋) **삭제 tombstone(소프트 삭제)** — `deleteNote`가 행을 지우지 않고 `deleted=true`로 표시 → 삭제가 일반 LWW 갱신이 되어 기기 간 전파. `notes`에 `deleted`/`deleted_at` 컬럼 추가(마이그레이션 사용자 실행 완료). 2계정 실측: 삭제→목록제외+클라우드 tombstone, fresh IDB 재로그인 시 필터·되살아남 없음.
+- `1996ea7` **삭제 tombstone(소프트 삭제)** — `deleteNote`가 행을 지우지 않고 `deleted=true`로 표시 → 삭제가 일반 LWW 갱신이 되어 기기 간 전파. `notes`에 `deleted`/`deleted_at` 컬럼 추가. 2계정 실측.
+
+**PDF 노트 영속화 (2026-07-10 세션) — 완료·검증:**
+- 결정: 필기앱 10종 조사 결과 전부 "PDF를 노트와 함께 저장(다시 고르기 없음)". 삼성/GoodNotes 방식 채택 → **PDF 원본을 Supabase Storage에 저장 + 무료 용량 한도**(비용은 티어로 통제).
+- `84c1775` **Phase 1**: `pdfStore.ts` — Storage(note-files 버킷) 업로드/다운로드/삭제 + 무료 한도(파일당 10MB/계정당 50MB, QuotaError). 경로 `<uid>/<noteId>.pdf`, 정책으로 계정 격리.
+- **Phase 2**(이 커밋): PDF 페이지별 필기를 노트에 영속화.
+  - `pdfInk.ts` 공용 타입, `PdfAdvancedRenderer` 페이지 획 리프팅(`initialPageStrokes`/`onStrokesChange`), `notesStore` `pdfPages` 필드 + `saveNotePdfPages` + 삭제 시 Storage 파일 정리, `LiveNoteView` 다운로드·복원·디바운스 저장, `NewNoteModal` PDF 선택 시 노트생성+업로드+한도안내.
+  - `notes`에 `pdf_pages jsonb` 컬럼 추가(마이그레이션 사용자 실행 완료).
+  - **실측(실 Supabase)**: PDF 노트 생성→Storage 업로드 / 필기→pdfPages 저장·동기화 / **fresh IDB 재로그인→PDF 자동 다운로드+필기 복원(6362px, 다시 고르기 없음)** / 10MB 초과 차단 배너 / 삭제 시 Storage 파일 제거.
+  - **남음(후속)**: 캡쳐 노트 영속화(Phase 3), PDF 노트 썸네일, 서버측 한도 강제, tombstone/Storage purge.
+
+**⚠️ 외부 준비물 적용됨(이번 세션)**: Supabase Storage `note-files` 버킷(Private)+정책, `notes.pdf_pages` 컬럼.
 
 **바로 이어서 할 후보 (사용자와 정할 것):**
 - **B** 실제 호스팅·도메인 점검 (GitHub 자동배포는 이미 있음 → 도메인 연결·배포 확인)

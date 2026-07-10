@@ -8,10 +8,14 @@
 //   - LWW 머지: 로그인 시 원격을 내려받아 updated_at이 더 최신인 쪽으로 병합.
 // 외부 의존성 없이 raw IndexedDB 사용. Supabase 미설정(시뮬 모드)이면 로컬만 쓴다.
 import type { InkStroke } from './inkEngine';
+import type { PdfPageStrokes } from './pdfInk';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { getCurrentUser } from './auth';
+import { deletePdf } from './pdfStore';
 
-export type PaperStyle = 'blank' | 'ruled' | 'oxford';
+// 'pdf'/'capture'도 노트로 영속화한다. 빈/유선/옥스포드는 InkCanvas 획(strokes),
+// pdf는 페이지별 획(pdfPages) + Storage의 원본 파일을 사용한다.
+export type PaperStyle = 'blank' | 'ruled' | 'oxford' | 'pdf' | 'capture';
 
 export interface NoteMeta {
   id: string;
@@ -23,7 +27,8 @@ export interface NoteMeta {
 }
 
 export interface Note extends NoteMeta {
-  strokes: InkStroke[]; // InkCanvas의 스트로크 모델을 그대로 보관
+  strokes: InkStroke[]; // InkCanvas의 스트로크 모델을 그대로 보관 (pdf/capture는 비어 있음)
+  pdfPages?: PdfPageStrokes; // PDF 노트: 페이지별 필기. 원본 파일은 Storage(pdfStore)에 별도 저장.
   // ↓ 내부 필드 (소비처는 무시). IndexedDB에만 저장, NoteMeta 반환 시 제외.
   user_id?: string | null; // 소유 계정(Supabase Auth user.id). 게스트/미로그인 = null
   _dirty?: boolean; // 클라우드 업로드 대기(오프라인/실패). 성공 시 false로 정리
@@ -71,6 +76,8 @@ const STYLE_LABEL: Record<PaperStyle, string> = {
   blank: '무선 노트',
   ruled: '유선 노트',
   oxford: '옥스포드 노트',
+  pdf: 'PDF 노트',
+  capture: '캡쳐 노트',
 };
 
 // ============================================================
@@ -98,6 +105,7 @@ interface NoteRow {
   updated_at: number;
   deleted: boolean;
   deleted_at: number | null;
+  pdf_pages: unknown;
 }
 
 const toRow = (n: Note, uid: string): NoteRow => ({
@@ -111,6 +119,7 @@ const toRow = (n: Note, uid: string): NoteRow => ({
   updated_at: n.updatedAt,
   deleted: n.deleted ?? false,
   deleted_at: n.deletedAt ?? null,
+  pdf_pages: n.pdfPages ?? null,
 });
 
 const fromRow = (r: NoteRow): Note => ({
@@ -119,6 +128,7 @@ const fromRow = (r: NoteRow): Note => ({
   title: r.title,
   style: (r.style as PaperStyle) || 'blank',
   strokes: (r.strokes as InkStroke[]) ?? [],
+  pdfPages: (r.pdf_pages as PdfPageStrokes) ?? undefined,
   thumbnail: r.thumbnail ?? undefined,
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
@@ -322,6 +332,22 @@ export async function saveNoteStrokes(
   void pushNote(note);
 }
 
+// PDF 노트: 페이지별 필기 저장 (원본 파일은 pdfStore가 Storage에 별도 저장).
+export async function saveNotePdfPages(
+  id: string,
+  pdfPages: PdfPageStrokes,
+  thumbnail?: string
+): Promise<void> {
+  const note = await getNote(id);
+  if (!note) return;
+  note.pdfPages = pdfPages;
+  note.updatedAt = Date.now();
+  if (thumbnail) note.thumbnail = thumbnail;
+  note._dirty = true;
+  await run('readwrite', (s) => s.put(note));
+  void pushNote(note);
+}
+
 export async function renameNote(id: string, title: string): Promise<void> {
   const note = await getNote(id);
   if (!note) return;
@@ -343,8 +369,11 @@ export async function deleteNote(id: string): Promise<void> {
   note.deletedAt = now;
   note.updatedAt = now; // 삭제가 최신 변경이 되도록(LWW로 전파)
   note.strokes = []; // 용량 절약: tombstone은 획을 보관할 필요 없음
+  note.pdfPages = undefined;
   note.thumbnail = undefined;
   note._dirty = true;
   await run('readwrite', (s) => s.put(note));
   void pushNote(note);
+  // PDF 노트면 Storage 원본 파일도 정리 (best-effort). 파일 없으면 무해.
+  if (note.style === 'pdf') void deletePdf(id);
 }

@@ -16,7 +16,9 @@ import { useTranscription } from '../hooks/useTranscription';
 
 import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
-import { getNote, saveNoteStrokes } from '../lib/notesStore';
+import { getNote, saveNoteStrokes, saveNotePdfPages } from '../lib/notesStore';
+import { downloadPdf } from '../lib/pdfStore';
+import type { PdfPageStrokes } from '../lib/pdfInk';
 import { usePreferences } from '../lib/preferences';
 import { useDeviceMode } from '../lib/deviceMode';
 import { summarizeTranscript, isAiSummaryConfigured } from '../lib/aiSummary';
@@ -34,16 +36,58 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const noteId: string | undefined = navContext?.noteId;
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  // PDF 노트: 저장된 페이지별 필기(복원용) + 최신값 ref(언마운트 flush용) + 디바운스 타이머
+  const [pdfInitialPages, setPdfInitialPages] = useState<PdfPageStrokes | undefined>(undefined);
+  const pdfPagesRef = useRef<PdfPageStrokes | null>(null);
+  const pdfSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // PDF 소스 준비: (1) 방금 고른 파일이 있으면 그걸, (2) 저장된 노트면 Storage에서 다운로드.
+  // 저장된 페이지별 필기도 함께 불러와 복원한다.
   useEffect(() => {
-    if (paperStyle === 'pdf' && fileDetails) {
-      const url = URL.createObjectURL(fileDetails);
-      setPdfUrl(url);
-      return () => {
-        URL.revokeObjectURL(url);
-      };
-    }
-  }, [paperStyle, fileDetails]);
+    if (paperStyle !== 'pdf') return;
+    let revoked = false;
+    let objUrl: string | null = null;
+    const setup = async () => {
+      if (fileDetails) {
+        // 새로 만든 PDF 노트: 방금 고른 파일 사용 (업로드는 NewNoteModal이 이미 수행)
+        objUrl = URL.createObjectURL(fileDetails);
+        if (!revoked) setPdfUrl(objUrl);
+      }
+      if (noteId) {
+        const note = await getNote(noteId);
+        if (!revoked && note?.pdfPages) setPdfInitialPages(note.pdfPages);
+        // 방금 고른 파일이 없으면(대시보드에서 재열기) Storage에서 원본 다운로드
+        if (!fileDetails) {
+          const blob = await downloadPdf(noteId);
+          if (blob && !revoked) {
+            objUrl = URL.createObjectURL(blob);
+            setPdfUrl(objUrl);
+          }
+        }
+      }
+    };
+    void setup();
+    return () => {
+      revoked = true;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [paperStyle, fileDetails, noteId]);
+
+  // PDF 필기 변경 → 디바운스 저장 + 최신값 보관(언마운트 시 flush)
+  const handlePdfStrokesChange = (pages: PdfPageStrokes) => {
+    pdfPagesRef.current = pages;
+    if (!noteId) return;
+    if (pdfSaveTimer.current) clearTimeout(pdfSaveTimer.current);
+    pdfSaveTimer.current = setTimeout(() => void saveNotePdfPages(noteId, pages), 1000);
+  };
+
+  // 화면을 떠날 때 PDF 필기 마지막 상태 flush
+  useEffect(() => {
+    return () => {
+      if (pdfSaveTimer.current) clearTimeout(pdfSaveTimer.current);
+      if (noteId && pdfPagesRef.current) void saveNotePdfPages(noteId, pdfPagesRef.current);
+    };
+  }, [noteId]);
 
   const [isRecording, setIsRecording] = useState(isQuickRecord);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -352,6 +396,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
            activeType={activeType}
            setActiveType={setActiveType}
            updateActivePen={updateActivePen}
+           initialPageStrokes={pdfInitialPages}
+           onStrokesChange={handlePdfStrokesChange}
         />
       )}
 

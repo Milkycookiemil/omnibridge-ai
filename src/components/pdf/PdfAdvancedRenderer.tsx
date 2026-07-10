@@ -8,21 +8,11 @@ import {
   renderInkSegment, widthForPressure,
   type InkSegment, type PenModel, type PenType,
 } from '../../lib/inkEngine';
+// 페이지별 비율좌표(0~1) 저장 구조 — 노트 영속화를 위해 공용 모듈에서 가져온다.
+import type { InkPoint, PageInkSeg, PageStroke, PdfPageStrokes } from '../../lib/pdfInk';
 
 // Initialize worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-
-// 페이지별 비율좌표(0~1) 저장 구조. 줌/스크롤로 캔버스 픽셀 크기가 바뀌어도
-// 비율로 보관했다가 렌더 시 픽셀로 환산하므로 위치가 보존된다.
-// 굵기는 필압이 반영된 최종 CSS px 값을 세그먼트마다 저장해 재현한다.
-interface InkPoint { x: number; y: number; } // ratio 0~1
-interface PageInkSeg { from: InkPoint; to: InkPoint; width: number; } // width: CSS px
-interface PageStroke {
-  penType: PenType;
-  color: string;
-  opacity: number;
-  segs: PageInkSeg[];
-}
 
 interface PdfPageProps {
   pageNumber: number;
@@ -34,11 +24,14 @@ interface PdfPageProps {
   currentMatchIndex: number | null;
   onPageMatchCalculated: (pageIndex: number, matches: { textIndex: number, rect: any }[]) => void;
   onVisible: (pageNumber: number) => void;
+  initialStrokes?: PageStroke[]; // 저장된 필기 복원용
+  onStrokesChange?: (pageNumber: number, strokes: PageStroke[]) => void; // 필기 변경 알림(저장용)
 }
 
 const PdfPage: React.FC<PdfPageProps> = ({
   pageNumber, pdfDocument, pen, scale, searchText,
-  highlightedIndexes, currentMatchIndex, onPageMatchCalculated, onVisible
+  highlightedIndexes, currentMatchIndex, onPageMatchCalculated, onVisible,
+  initialStrokes, onStrokesChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -50,7 +43,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const [matches, setMatches] = useState<{textIndex: number, rect: any}[]>([]);
   const [hasText, setHasText] = useState<boolean | null>(null);
 
-  const [strokes, setStrokes] = useState<PageStroke[]>([]);
+  const [strokes, setStrokes] = useState<PageStroke[]>(() => initialStrokes ?? []);
+  const strokesRef = useRef<PageStroke[]>(strokes); // 최신 스트로크(변경 알림 계산용)
+  strokesRef.current = strokes;
   const currentStrokeRef = useRef<PageStroke | null>(null);
   const lastRatioRef = useRef<InkPoint | null>(null);
 
@@ -230,7 +225,10 @@ const PdfPage: React.FC<PdfPageProps> = ({
     //  실행돼 null이 저장되는 버그가 있어 redrawStrokes가 복원하지 못했음)
     const finishedStroke = currentStrokeRef.current;
     if (isDrawingRef.current && finishedStroke && finishedStroke.segs.length > 0) {
-        setStrokes(prev => [...prev, finishedStroke]);
+        const next = [...strokesRef.current, finishedStroke];
+        strokesRef.current = next;
+        setStrokes(next);
+        onStrokesChange?.(pageNumber, next); // 저장 트리거 (부모가 디바운스 저장)
     }
     currentStrokeRef.current = null;
     lastRatioRef.current = null;
@@ -284,7 +282,9 @@ export const PdfAdvancedRenderer = ({
   activeType,
   setActiveType,
   updateActivePen,
-  fileName
+  fileName,
+  initialPageStrokes,
+  onStrokesChange,
 }: {
   fileUrl: string | null;
   pen: PenModel;
@@ -292,6 +292,8 @@ export const PdfAdvancedRenderer = ({
   setActiveType: (t: PenType) => void;
   updateActivePen: (patch: Partial<PenModel>) => void;
   fileName: string;
+  initialPageStrokes?: PdfPageStrokes; // 저장된 페이지별 필기 복원용
+  onStrokesChange?: (pages: PdfPageStrokes) => void; // 전체 페이지 필기 변경 알림(저장용)
 }) => {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -323,6 +325,13 @@ export const PdfAdvancedRenderer = ({
     const clamped = Math.max(1, Math.min(numPages, n));
     const pages = containerRef.current?.querySelectorAll('.pdf-page');
     pages?.[clamped - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // 페이지별 필기를 모아 두었다가 변경 시 상위(LiveNoteView)로 통지 → 노트에 저장.
+  const pagesRef = useRef<PdfPageStrokes>(initialPageStrokes ?? {});
+  const handlePageStrokesChange = (pageNumber: number, pageStrokes: PageStroke[]) => {
+    pagesRef.current = { ...pagesRef.current, [pageNumber]: pageStrokes };
+    onStrokesChange?.(pagesRef.current);
   };
 
   const handlePageMatchCalculated = (pageIndex: number, matches: any[]) => {
@@ -444,6 +453,8 @@ export const PdfAdvancedRenderer = ({
                currentMatchIndex={currentMatchIndex}
                onPageMatchCalculated={handlePageMatchCalculated}
                onVisible={setCurrentPageNum}
+               initialStrokes={initialPageStrokes?.[i + 1]}
+               onStrokesChange={handlePageStrokesChange}
              />
          ))}
       </div>

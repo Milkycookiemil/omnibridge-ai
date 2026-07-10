@@ -6,7 +6,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, File, FilePlus, Sparkles, ChevronLeft } from 'lucide-react';
 import { ViewState } from '../types';
-import { createNote, type PaperStyle } from '../lib/notesStore';
+import { createNote, deleteNote, type PaperStyle } from '../lib/notesStore';
+import { uploadPdf, isFileStoreReady, QuotaError } from '../lib/pdfStore';
 
 interface NewNoteModalProps {
   open: boolean;
@@ -16,19 +17,45 @@ interface NewNoteModalProps {
 
 export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
   const [selectedNoteType, setSelectedNoteType] = useState<'blank' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 열릴 때마다 1단계로 초기화
   useEffect(() => {
-    if (open) setSelectedNoteType(null);
+    if (open) {
+      setSelectedNoteType(null);
+      setError(null);
+    }
   }, [open]);
 
-  const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0];
-      onClose();
-      onNavigate('live_note', { style: 'pdf', fileName: file.name, file });
+  // PDF 선택 → PDF 노트 생성 + 원본을 Storage에 업로드(로그인 시) → 편집 화면으로.
+  // 업로드하면 다른 기기·재방문에서 파일을 다시 고를 필요 없이 자동 복원된다.
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 같은 파일 재선택 가능하도록
+    if (!file) return;
+    setError(null);
+    setBusy(true);
+    const title = file.name.replace(/\.pdf$/i, '');
+    const note = await createNote('pdf', title);
+    if (isFileStoreReady()) {
+      try {
+        await uploadPdf(note.id, file);
+      } catch (err) {
+        setBusy(false);
+        if (err instanceof QuotaError) {
+          await deleteNote(note.id); // 저장 못 한 빈 노트 정리
+          setError(err.message);
+          return;
+        }
+        // 업로드 실패(오프라인 등): 로컬 세션은 계속 쓰되 클라우드 복원은 다음 기회에.
+        console.warn('PDF 업로드 실패(로컬은 계속 사용):', err);
+      }
     }
+    setBusy(false);
+    onClose();
+    onNavigate('live_note', { noteId: note.id, style: 'pdf', fileName: file.name, file });
   };
 
   // 새 손필기 노트 생성 후 열기
@@ -65,6 +92,15 @@ export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
               </button>
 
               <h2 className="text-xl font-bold mb-6">새 노트 생성</h2>
+
+              {error && (
+                <div className="mb-4 text-sm font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                  {error}
+                </div>
+              )}
+              {busy && (
+                <div className="mb-4 text-sm font-medium text-slate-500">PDF 업로드 중…</div>
+              )}
 
               {!selectedNoteType ? (
                 <div className="grid grid-cols-2 gap-4">
