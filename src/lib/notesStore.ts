@@ -27,6 +27,8 @@ export interface Note extends NoteMeta {
   // ↓ 내부 필드 (소비처는 무시). IndexedDB에만 저장, NoteMeta 반환 시 제외.
   user_id?: string | null; // 소유 계정(Supabase Auth user.id). 게스트/미로그인 = null
   _dirty?: boolean; // 클라우드 업로드 대기(오프라인/실패). 성공 시 false로 정리
+  deleted?: boolean; // 소프트 삭제(tombstone). 목록에서 제외되나 삭제를 기기 간 전파하려고 행은 남긴다.
+  deletedAt?: number; // 삭제 시각(epoch ms)
 }
 
 const DB_NAME = 'omnibridge';
@@ -94,6 +96,8 @@ interface NoteRow {
   thumbnail: string | null;
   created_at: number;
   updated_at: number;
+  deleted: boolean;
+  deleted_at: number | null;
 }
 
 const toRow = (n: Note, uid: string): NoteRow => ({
@@ -105,6 +109,8 @@ const toRow = (n: Note, uid: string): NoteRow => ({
   thumbnail: n.thumbnail ?? null,
   created_at: n.createdAt,
   updated_at: n.updatedAt,
+  deleted: n.deleted ?? false,
+  deleted_at: n.deletedAt ?? null,
 });
 
 const fromRow = (r: NoteRow): Note => ({
@@ -116,6 +122,8 @@ const fromRow = (r: NoteRow): Note => ({
   thumbnail: r.thumbnail ?? undefined,
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
+  deleted: Boolean(r.deleted),
+  deletedAt: r.deleted_at != null ? Number(r.deleted_at) : undefined,
   _dirty: false,
 });
 
@@ -239,7 +247,7 @@ if (typeof window !== 'undefined') {
 export async function listNotes(): Promise<NoteMeta[]> {
   const all = await run<Note[]>('readonly', (s) => s.getAll());
   return all
-    .filter(ownedByCurrent)
+    .filter((n) => ownedByCurrent(n) && !n.deleted) // 소프트 삭제된 노트는 목록에서 제외
     .map((n) => ({
       id: n.id,
       title: n.title,
@@ -324,18 +332,19 @@ export async function renameNote(id: string, title: string): Promise<void> {
   void pushNote(note);
 }
 
+// 소프트 삭제(tombstone). 행을 지우지 않고 deleted 플래그를 세워 두면, 삭제가 하나의
+// 일반 LWW(updated_at) 갱신이 되어 기기 간에 자동 전파된다(다른 기기가 pull 시 deleted를
+// 받아 목록에서 제외). 하드 삭제 때 생기던 "다른 기기에서 되살아남" 문제를 없앤다.
 export async function deleteNote(id: string): Promise<void> {
-  await run('readwrite', (s) => s.delete(id));
-  const uid = currentUid();
-  if (isSupabaseConfigured && supabase && uid) {
-    // 클라우드에서도 삭제 (best-effort). 오프라인이면 다음 pull에서 되돌아올 수 있음(4b 한계).
-    supabase
-      .from('notes')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', uid)
-      .then(({ error }) => {
-        if (error) console.warn('[notesStore] 클라우드 삭제 실패:', error.message);
-      });
-  }
+  const note = await getNote(id);
+  if (!note) return;
+  const now = Date.now();
+  note.deleted = true;
+  note.deletedAt = now;
+  note.updatedAt = now; // 삭제가 최신 변경이 되도록(LWW로 전파)
+  note.strokes = []; // 용량 절약: tombstone은 획을 보관할 필요 없음
+  note.thumbnail = undefined;
+  note._dirty = true;
+  await run('readwrite', (s) => s.put(note));
+  void pushNote(note);
 }

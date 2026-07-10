@@ -5,20 +5,24 @@
 
 ---
 
-## ⏩ 다음 세션 재개 지점 (2026-07-09 세션 종료 시점)
+## ⏩ 다음 세션 재개 지점 (2026-07-10 갱신)
 
-**현재 HEAD:** `2e0d8f7` · 작업트리 clean · `tsc --noEmit` 0에러 · `npm run build` 통과.
+**작업트리 clean · `tsc --noEmit` 0에러 · `npm run build` 통과.** (HEAD는 아래 커밋 목록 최신)
 
-**이번 세션에 완료·커밋된 것 (제품화 로드맵):**
+**2026-07-09 세션 완료·커밋 (제품화 로드맵):**
 - `a21477b` **1b-4b** 노트 Supabase 클라우드 저장 + 계정별 격리(RLS) — 2계정 실측 검증
 - `fbfffbd` **1c** 노트 내보내기/가져오기(.ob 로컬 ✅ + Google Drive 코드 완성·비활성)
 - `aabf5fa` **AI 요약 실연동(BYOK)** — 더미 제거, 사용자 본인 Claude 키로 전사 요약
 - `2e0d8f7` **2단계-법적 페이지** 이용약관·개인정보처리방침 + 로그인/설정 링크
 
+**동기화 완성도 마무리 (2026-07-10 세션) — 완료·검증:**
+- `d07e5e7` **게스트→로그인 노트 이관** — 로그인 시 게스트(user_id null) 노트를 현재 계정으로 귀속+업로드. 2계정 실측.
+- (커밋 대기 중 → 이 커밋) **삭제 tombstone(소프트 삭제)** — `deleteNote`가 행을 지우지 않고 `deleted=true`로 표시 → 삭제가 일반 LWW 갱신이 되어 기기 간 전파. `notes`에 `deleted`/`deleted_at` 컬럼 추가(마이그레이션 사용자 실행 완료). 2계정 실측: 삭제→목록제외+클라우드 tombstone, fresh IDB 재로그인 시 필터·되살아남 없음.
+
 **바로 이어서 할 후보 (사용자와 정할 것):**
 - **B** 실제 호스팅·도메인 점검 (GitHub 자동배포는 이미 있음 → 도메인 연결·배포 확인)
 - **C** Stripe 구독 결제 (3단계, Stripe 계정 필요. Pro 티어 UI는 배선만 됨)
-- **D** 마무리: 게스트→로그인 노트 이관 / 삭제 tombstone(기기간 전파) / Google Drive 활성화(Client ID 필요)
+- **D** 남은 마무리: Google Drive 활성화(Client ID 필요) / PDF·캡쳐 노트 클라우드 영속화 / tombstone 오래된 행 정리(purge)
 
 **활성화 대기 중인 외부 준비물:**
 - Google Drive 내보내기 실동작 → `.env.local`에 `VITE_GOOGLE_CLIENT_ID`(발급 절차는 `.env.example`)

@@ -15,8 +15,16 @@ create table if not exists public.notes (
   strokes     jsonb   not null default '[]'::jsonb,
   thumbnail   text,
   created_at  bigint  not null,                  -- epoch ms
-  updated_at  bigint  not null
+  updated_at  bigint  not null,
+  deleted     boolean not null default false,    -- 소프트 삭제(tombstone) — 삭제를 기기 간 전파
+  deleted_at  bigint                             -- 삭제 시각(epoch ms)
 );
+
+-- 기존 테이블에 소프트 삭제 컬럼 추가 (이미 notes를 만든 프로젝트는 이 줄만 다시 실행).
+-- ※ 앱이 upsert 시 deleted/deleted_at 컬럼을 항상 포함하므로, 이 컬럼이 없으면 클라우드
+--    저장이 실패한다(로컬은 보존). 이 마이그레이션을 반드시 먼저 실행할 것.
+alter table public.notes add column if not exists deleted    boolean not null default false;
+alter table public.notes add column if not exists deleted_at bigint;
 
 -- 행 레벨 보안 활성화 (자동 RLS가 켜져 있어도 명시적으로 이중 보장)
 alter table public.notes enable row level security;
