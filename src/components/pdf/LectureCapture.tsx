@@ -5,6 +5,30 @@ import {
   uploadCaptureSlides, downloadCaptureSlides, isFileStoreReady, QuotaError,
   type CaptureSlide,
 } from '../../lib/pdfStore';
+import { saveNoteThumbnail } from '../../lib/notesStore';
+
+// 첫 슬라이드 이미지(data URL)를 240px JPEG 썸네일로 축소.
+const makeCaptureThumb = (dataUrl: string): Promise<string | undefined> =>
+  new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const tw = 240;
+        const th = Math.max(1, Math.round((img.height / img.width) * tw));
+        const c = document.createElement('canvas');
+        c.width = tw;
+        c.height = th;
+        const ctx = c.getContext('2d');
+        if (!ctx) return resolve(undefined);
+        ctx.drawImage(img, 0, 0, tw, th);
+        resolve(c.toDataURL('image/jpeg', 0.7));
+      } catch {
+        resolve(undefined);
+      }
+    };
+    img.onerror = () => resolve(undefined);
+    img.src = dataUrl;
+  });
 
 type CapturedSlide = CaptureSlide; // { id, imgData, timestamp }
 
@@ -40,6 +64,11 @@ export const LectureCapture = ({ noteId }: { noteId?: string }) => {
       try {
         await uploadCaptureSlides(noteId, next);
         setSaveMsg(null);
+        // 첫 슬라이드를 대시보드 카드 썸네일로
+        if (next.length > 0) {
+          const thumb = await makeCaptureThumb(next[0].imgData);
+          if (thumb) await saveNoteThumbnail(noteId, thumb);
+        }
       } catch (e) {
         if (e instanceof QuotaError) setSaveMsg(e.message);
         else console.warn('캡쳐 저장 실패:', e);

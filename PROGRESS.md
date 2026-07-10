@@ -38,7 +38,8 @@
 
 **PDF 노트 썸네일 (2026-07-10 세션) — 완료·검증:**
 - PDF 노트 저장 시 첫 페이지(배경 렌더 + 필기 레이어)를 240px JPEG로 합성해 `note.thumbnail`에 저장 → 대시보드 카드에 미리보기 표시(기존 일반 아이콘 대체). `LiveNoteView.makePdfThumb` + 디바운스 저장에 연결.
-- 실측: 필기→썸네일 생성(JPEG 3KB)·동기화, 대시보드 카드 이미지 표시(240×311) 확인. (캡쳐 노트 썸네일=첫 슬라이드는 쉬운 후속)
+- 실측: 필기→썸네일 생성(JPEG 3KB)·동기화, 대시보드 카드 이미지 표시(240×311) 확인.
+- **캡쳐 노트 썸네일**도 추가: 첫 슬라이드를 240px JPEG로 축소해 `saveNoteThumbnail`로 저장(`LectureCapture`). 실측: 슬라이드 저장 시 썸네일 생성(2KB)·동기화·카드 표시 확인.
 
 **⚠️ 외부 준비물 적용됨(이번 세션)**: Supabase Storage `note-files` 버킷(Private) + 정책 4종(read/insert/**update**/delete), `notes.pdf_pages` 컬럼.
 

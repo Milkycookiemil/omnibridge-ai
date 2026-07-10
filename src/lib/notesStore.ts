@@ -348,6 +348,17 @@ export async function saveNotePdfPages(
   void pushNote(note);
 }
 
+// 노트 썸네일만 갱신(대시보드 카드용). 캡쳐 노트 등에서 사용.
+export async function saveNoteThumbnail(id: string, thumbnail: string): Promise<void> {
+  const note = await getNote(id);
+  if (!note || note.thumbnail === thumbnail) return;
+  note.thumbnail = thumbnail;
+  note.updatedAt = Date.now();
+  note._dirty = true;
+  await run('readwrite', (s) => s.put(note));
+  void pushNote(note);
+}
+
 export async function renameNote(id: string, title: string): Promise<void> {
   const note = await getNote(id);
   if (!note) return;
