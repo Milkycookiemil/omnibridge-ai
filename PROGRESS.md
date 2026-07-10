@@ -36,6 +36,10 @@
 - **버그 발견·수정(검증 중)**: Storage 정책에 **UPDATE가 없어 upsert(덮어쓰기)=UPDATE가 RLS로 차단** → 캡쳐 2번째 저장부터 실패. `note_files_own_update` 정책 추가(사용자 실행)로 해결. schema.sql에 Storage 정책 4종 문서화.
 - **실측**: 캡쳐 노트 생성·동기화 / Node로 슬라이드 심고 재열기→2개 자동 복원 / 앱에서 1개 삭제→Storage 2→1 반영(upsert 성공) / 삭제 시 파일 정리. (getDisplayMedia 화면캡쳐는 헤드리스 불가 — 저장/복원 데이터 경로만 검증)
 
+**PDF 노트 썸네일 (2026-07-10 세션) — 완료·검증:**
+- PDF 노트 저장 시 첫 페이지(배경 렌더 + 필기 레이어)를 240px JPEG로 합성해 `note.thumbnail`에 저장 → 대시보드 카드에 미리보기 표시(기존 일반 아이콘 대체). `LiveNoteView.makePdfThumb` + 디바운스 저장에 연결.
+- 실측: 필기→썸네일 생성(JPEG 3KB)·동기화, 대시보드 카드 이미지 표시(240×311) 확인. (캡쳐 노트 썸네일=첫 슬라이드는 쉬운 후속)
+
 **⚠️ 외부 준비물 적용됨(이번 세션)**: Supabase Storage `note-files` 버킷(Private) + 정책 4종(read/insert/**update**/delete), `notes.pdf_pages` 컬럼.
 
 **바로 이어서 할 후보 (사용자와 정할 것):**

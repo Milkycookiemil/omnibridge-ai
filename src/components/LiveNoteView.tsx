@@ -73,12 +73,38 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     };
   }, [paperStyle, fileDetails, noteId]);
 
-  // PDF 필기 변경 → 디바운스 저장 + 최신값 보관(언마운트 시 flush)
+  // PDF 첫 페이지(배경 + 필기)를 합성해 대시보드 카드용 썸네일 생성.
+  const makePdfThumb = (): string | undefined => {
+    const page = document.querySelector('.pdf-page');
+    if (!page) return undefined;
+    const canvases = page.querySelectorAll('canvas');
+    const bg = canvases[0] as HTMLCanvasElement | undefined; // 배경(렌더된 PDF 페이지)
+    const ink = canvases[canvases.length - 1] as HTMLCanvasElement | undefined; // 필기 레이어
+    if (!bg || !bg.width) return undefined;
+    try {
+      const tw = 240;
+      const th = Math.max(1, Math.round((bg.height / bg.width) * tw));
+      const off = document.createElement('canvas');
+      off.width = tw;
+      off.height = th;
+      const ctx = off.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, tw, th);
+      ctx.drawImage(bg, 0, 0, tw, th);
+      if (ink && ink.width) ctx.drawImage(ink, 0, 0, tw, th);
+      return off.toDataURL('image/jpeg', 0.7);
+    } catch {
+      return undefined;
+    }
+  };
+
+  // PDF 필기 변경 → 디바운스 저장(+썸네일) + 최신값 보관(언마운트 시 flush)
   const handlePdfStrokesChange = (pages: PdfPageStrokes) => {
     pdfPagesRef.current = pages;
     if (!noteId) return;
     if (pdfSaveTimer.current) clearTimeout(pdfSaveTimer.current);
-    pdfSaveTimer.current = setTimeout(() => void saveNotePdfPages(noteId, pages), 1000);
+    pdfSaveTimer.current = setTimeout(() => void saveNotePdfPages(noteId, pages, makePdfThumb()), 1000);
   };
 
   // 화면을 떠날 때 PDF 필기 마지막 상태 flush
