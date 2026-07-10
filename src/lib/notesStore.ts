@@ -11,7 +11,7 @@ import type { InkStroke } from './inkEngine';
 import type { PdfPageStrokes } from './pdfInk';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { getCurrentUser } from './auth';
-import { deletePdf } from './pdfStore';
+import { deletePdf, deleteCaptureSlides } from './pdfStore';
 
 // 'pdf'/'capture'도 노트로 영속화한다. 빈/유선/옥스포드는 InkCanvas 획(strokes),
 // pdf는 페이지별 획(pdfPages) + Storage의 원본 파일을 사용한다.
@@ -374,6 +374,7 @@ export async function deleteNote(id: string): Promise<void> {
   note._dirty = true;
   await run('readwrite', (s) => s.put(note));
   void pushNote(note);
-  // PDF 노트면 Storage 원본 파일도 정리 (best-effort). 파일 없으면 무해.
+  // Storage에 둔 원본 파일도 정리 (best-effort). 파일 없으면 무해.
   if (note.style === 'pdf') void deletePdf(id);
+  if (note.style === 'capture') void deleteCaptureSlides(id);
 }

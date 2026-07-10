@@ -123,9 +123,11 @@ export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
                     <span className="font-medium text-sm">PDF 추가</span>
                   </button>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      // 캡쳐 노트도 noteId를 부여해 슬라이드를 영속화한다.
+                      const note = await createNote('capture');
                       onClose();
-                      onNavigate('live_note', { style: 'capture' });
+                      onNavigate('live_note', { noteId: note.id, style: 'capture', title: note.title });
                     }}
                     className="p-6 col-span-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 flex flex-col items-center justify-center gap-3 transition-colors text-slate-700 hover:border-slate-300 shadow-sm"
                   >

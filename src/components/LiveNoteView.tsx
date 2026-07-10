@@ -386,7 +386,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   // 손필기 카드 내부 (캡쳐 / PDF / 일반 캔버스) — 태블릿·노트북 공용
   const handwritingCardInner = (
     <>
-      {paperStyle === 'capture' && <LectureCapture />}
+      {paperStyle === 'capture' && <LectureCapture noteId={noteId} />}
 
       {paperStyle === 'pdf' && (
         <PdfAdvancedRenderer

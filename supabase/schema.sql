@@ -53,3 +53,19 @@ create policy "notes_delete_own" on public.notes
 -- 최신 수정순 조회 인덱스
 create index if not exists notes_user_updated_idx
   on public.notes (user_id, updated_at desc);
+
+-- ============================================================
+--  Storage: note-files 버킷 (PDF 원본 / 캡쳐 슬라이드 JSON)
+--  버킷은 대시보드 Storage에서 Private으로 생성. 경로 <user_id>/... 로 계정 격리.
+--  ※ upsert(덮어쓰기)는 UPDATE라 update 정책이 반드시 필요하다(없으면 두 번째
+--    저장부터 "new row violates row-level security policy"로 실패).
+-- ============================================================
+create policy "note_files_own_read"   on storage.objects for select
+  using (bucket_id = 'note-files' and (auth.jwt()->>'sub') = (storage.foldername(name))[1]);
+create policy "note_files_own_insert" on storage.objects for insert
+  with check (bucket_id = 'note-files' and (auth.jwt()->>'sub') = (storage.foldername(name))[1]);
+create policy "note_files_own_update" on storage.objects for update
+  using      (bucket_id = 'note-files' and (auth.jwt()->>'sub') = (storage.foldername(name))[1])
+  with check (bucket_id = 'note-files' and (auth.jwt()->>'sub') = (storage.foldername(name))[1]);
+create policy "note_files_own_delete" on storage.objects for delete
+  using (bucket_id = 'note-files' and (auth.jwt()->>'sub') = (storage.foldername(name))[1]);

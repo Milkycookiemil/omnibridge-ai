@@ -1,20 +1,60 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Camera, StopCircle, Video, ListVideo, Trash2, Pencil } from 'lucide-react';
 import { SlideAnnotator } from '../ink/SlideAnnotator';
+import {
+  uploadCaptureSlides, downloadCaptureSlides, isFileStoreReady, QuotaError,
+  type CaptureSlide,
+} from '../../lib/pdfStore';
 
-interface CapturedSlide {
-  id: string;
-  imgData: string;
-  timestamp: string;
-}
+type CapturedSlide = CaptureSlide; // { id, imgData, timestamp }
 
-export const LectureCapture = () => {
+export const LectureCapture = ({ noteId }: { noteId?: string }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hiddenCanvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [slides, setSlides] = useState<CapturedSlide[]>([]);
   const [sensitivity, setSensitivity] = useState(35);
+
+  // 영속화: 저장된 캡쳐 복원 + 변경 시 Storage에 디바운스 저장
+  const slidesRef = useRef<CapturedSlide[]>([]);
+  slidesRef.current = slides;
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!noteId) return;
+    let cancelled = false;
+    downloadCaptureSlides(noteId).then((loaded) => {
+      if (!cancelled && loaded && loaded.length) setSlides(loaded);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId]);
+
+  const scheduleSave = (next: CapturedSlide[]) => {
+    if (!noteId || !isFileStoreReady()) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await uploadCaptureSlides(noteId, next);
+        setSaveMsg(null);
+      } catch (e) {
+        if (e instanceof QuotaError) setSaveMsg(e.message);
+        else console.warn('캡쳐 저장 실패:', e);
+      }
+    }, 1200);
+  };
+
+  // 화면 이탈 시 마지막 상태 flush
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (noteId && isFileStoreReady() && slidesRef.current.length)
+        void uploadCaptureSlides(noteId, slidesRef.current).catch(() => {});
+    };
+  }, [noteId]);
 
   const prevPixelsRef = useRef<Uint8ClampedArray | null>(null);
   const prevFullImgRef = useRef<string | null>(null);
@@ -63,15 +103,19 @@ export const LectureCapture = () => {
   };
 
   const addSlide = (imgData: string) => {
-    setSlides(prev => [...prev, {
+    const next = [...slidesRef.current, {
       id: Math.random().toString(36).substr(2, 9),
       imgData,
       timestamp: new Date().toLocaleTimeString('ko-KR', { hour12: false })
-    }]);
+    }];
+    setSlides(next);
+    scheduleSave(next);
   };
 
   const removeSlide = (id: string) => {
-    setSlides(prev => prev.filter(s => s.id !== id));
+    const next = slidesRef.current.filter(s => s.id !== id);
+    setSlides(next);
+    scheduleSave(next);
   };
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,7 +124,9 @@ export const LectureCapture = () => {
   // 합성(배경+잉크) 이미지로 해당 슬라이드를 갱신
   const saveAnnotated = (merged: string) => {
     if (!editingId) return;
-    setSlides(prev => prev.map(s => s.id === editingId ? { ...s, imgData: merged } : s));
+    const next = slidesRef.current.map(s => s.id === editingId ? { ...s, imgData: merged } : s);
+    setSlides(next);
+    scheduleSave(next);
     setEditingId(null);
   };
 
@@ -201,6 +247,12 @@ export const LectureCapture = () => {
              <ListVideo className="w-5 h-5 text-emerald-500" />
              캡쳐된 슬라이드 <span className="ml-auto bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-xs">{slides.length}</span>
           </div>
+
+          {saveMsg && (
+            <div className="mx-4 mt-3 text-xs font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+              {saveMsg}
+            </div>
+          )}
           
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
              {slides.length === 0 ? (

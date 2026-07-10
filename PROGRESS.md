@@ -26,9 +26,17 @@
   - `pdfInk.ts` 공용 타입, `PdfAdvancedRenderer` 페이지 획 리프팅(`initialPageStrokes`/`onStrokesChange`), `notesStore` `pdfPages` 필드 + `saveNotePdfPages` + 삭제 시 Storage 파일 정리, `LiveNoteView` 다운로드·복원·디바운스 저장, `NewNoteModal` PDF 선택 시 노트생성+업로드+한도안내.
   - `notes`에 `pdf_pages jsonb` 컬럼 추가(마이그레이션 사용자 실행 완료).
   - **실측(실 Supabase)**: PDF 노트 생성→Storage 업로드 / 필기→pdfPages 저장·동기화 / **fresh IDB 재로그인→PDF 자동 다운로드+필기 복원(6362px, 다시 고르기 없음)** / 10MB 초과 차단 배너 / 삭제 시 Storage 파일 제거.
-  - **남음(후속)**: 캡쳐 노트 영속화(Phase 3), PDF 노트 썸네일, 서버측 한도 강제, tombstone/Storage purge.
+  - **남음(후속)**: PDF 노트 썸네일, 서버측 한도 강제, tombstone/Storage purge.
 
-**⚠️ 외부 준비물 적용됨(이번 세션)**: Supabase Storage `note-files` 버킷(Private)+정책, `notes.pdf_pages` 컬럼.
+**캡쳐 노트 영속화 (2026-07-10 세션) — 완료·검증:**
+- 캡쳐 슬라이드(배경+잉크 합성 이미지 목록)를 **하나의 JSON으로 Storage에 저장**(`<uid>/<noteId>_capture.json`) — DB 컬럼 추가 없이 note-files 버킷 재사용.
+- `pdfStore.ts`에 `uploadCaptureSlides`/`downloadCaptureSlides`/`deleteCaptureSlides`(+`CaptureSlide` 타입) 추가.
+- `LectureCapture`: `noteId` prop 받아 마운트 시 복원 + add/remove/annotate 시 디바운스 저장 + 언마운트 flush + 한도 배너.
+- `NewNoteModal`: 강의 판서 캡쳐 → `createNote('capture')` 후 noteId로 이동. `LiveNoteView`가 noteId 전달. `deleteNote`가 캡쳐 파일도 정리.
+- **버그 발견·수정(검증 중)**: Storage 정책에 **UPDATE가 없어 upsert(덮어쓰기)=UPDATE가 RLS로 차단** → 캡쳐 2번째 저장부터 실패. `note_files_own_update` 정책 추가(사용자 실행)로 해결. schema.sql에 Storage 정책 4종 문서화.
+- **실측**: 캡쳐 노트 생성·동기화 / Node로 슬라이드 심고 재열기→2개 자동 복원 / 앱에서 1개 삭제→Storage 2→1 반영(upsert 성공) / 삭제 시 파일 정리. (getDisplayMedia 화면캡쳐는 헤드리스 불가 — 저장/복원 데이터 경로만 검증)
+
+**⚠️ 외부 준비물 적용됨(이번 세션)**: Supabase Storage `note-files` 버킷(Private) + 정책 4종(read/insert/**update**/delete), `notes.pdf_pages` 컬럼.
 
 **바로 이어서 할 후보 (사용자와 정할 것):**
 - **B** 실제 호스팅·도메인 점검 (GitHub 자동배포는 이미 있음 → 도메인 연결·배포 확인)

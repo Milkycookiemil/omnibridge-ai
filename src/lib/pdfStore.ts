@@ -79,3 +79,48 @@ export async function deletePdf(noteId: string): Promise<void> {
   const { error } = await supabase.storage.from(BUCKET).remove([pdfPath(u, noteId)]);
   if (error) console.warn('[pdfStore] PDF 삭제 실패:', error.message);
 }
+
+// ============================================================
+//  캡쳐 노트: 슬라이드 목록(각 슬라이드 = 배경+잉크 합성 이미지 data URL)을
+//  하나의 JSON 파일로 Storage에 저장한다. (필기는 이미지에 구워져 있어 이미지만 보관)
+// ============================================================
+export interface CaptureSlide {
+  id: string;
+  imgData: string; // data URL (배경+잉크 합성 JPEG)
+  timestamp: string;
+}
+
+const capturePath = (u: string, noteId: string) => `${u}/${noteId}_capture.json`;
+
+// 캡쳐 슬라이드 목록 업로드(덮어쓰기). 용량 초과 시 QuotaError.
+export async function uploadCaptureSlides(noteId: string, slides: CaptureSlide[]): Promise<void> {
+  const u = uid();
+  if (!isSupabaseConfigured || !supabase || !u) throw new Error('로그인이 필요합니다.');
+  const blob = new Blob([JSON.stringify(slides)], { type: 'application/json' });
+  if (blob.size > MAX_FILE_BYTES)
+    throw new QuotaError(`캡쳐 용량이 너무 큽니다. 무료는 노트당 최대 ${mb(MAX_FILE_BYTES)}MB까지예요.`);
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(capturePath(u, noteId), blob, { upsert: true, contentType: 'application/json' });
+  if (error) throw error;
+}
+
+// 캡쳐 슬라이드 목록 다운로드(재열기 복원용). 없거나 실패 시 null.
+export async function downloadCaptureSlides(noteId: string): Promise<CaptureSlide[] | null> {
+  const u = uid();
+  if (!supabase || !u) return null;
+  const { data, error } = await supabase.storage.from(BUCKET).download(capturePath(u, noteId));
+  if (error) return null;
+  try {
+    return JSON.parse(await data.text()) as CaptureSlide[];
+  } catch {
+    return null;
+  }
+}
+
+// 노트 삭제 시 캡쳐 파일 정리 (best-effort).
+export async function deleteCaptureSlides(noteId: string): Promise<void> {
+  const u = uid();
+  if (!supabase || !u) return;
+  await supabase.storage.from(BUCKET).remove([capturePath(u, noteId)]);
+}
