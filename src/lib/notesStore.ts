@@ -29,6 +29,7 @@ export interface NoteMeta {
 export interface Note extends NoteMeta {
   strokes: InkStroke[]; // InkCanvas의 스트로크 모델을 그대로 보관 (pdf/capture는 비어 있음)
   pdfPages?: PdfPageStrokes; // PDF 노트: 페이지별 필기. 원본 파일은 Storage(pdfStore)에 별도 저장.
+  typedText?: string; // 노트북 모드 '타이핑 복습' 텍스트. 손필기와 한 노트로 클라우드 동기화.
   // ↓ 내부 필드 (소비처는 무시). IndexedDB에만 저장, NoteMeta 반환 시 제외.
   user_id?: string | null; // 소유 계정(Supabase Auth user.id). 게스트/미로그인 = null
   _dirty?: boolean; // 클라우드 업로드 대기(오프라인/실패). 성공 시 false로 정리
@@ -106,6 +107,7 @@ interface NoteRow {
   deleted: boolean;
   deleted_at: number | null;
   pdf_pages: unknown;
+  typed_text: string | null;
 }
 
 const toRow = (n: Note, uid: string): NoteRow => ({
@@ -120,6 +122,7 @@ const toRow = (n: Note, uid: string): NoteRow => ({
   deleted: n.deleted ?? false,
   deleted_at: n.deletedAt ?? null,
   pdf_pages: n.pdfPages ?? null,
+  typed_text: n.typedText ?? null,
 });
 
 const fromRow = (r: NoteRow): Note => ({
@@ -129,6 +132,7 @@ const fromRow = (r: NoteRow): Note => ({
   style: (r.style as PaperStyle) || 'blank',
   strokes: (r.strokes as InkStroke[]) ?? [],
   pdfPages: (r.pdf_pages as PdfPageStrokes) ?? undefined,
+  typedText: r.typed_text ?? undefined,
   thumbnail: r.thumbnail ?? undefined,
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
@@ -343,6 +347,17 @@ export async function saveNotePdfPages(
   note.pdfPages = pdfPages;
   note.updatedAt = Date.now();
   if (thumbnail) note.thumbnail = thumbnail;
+  note._dirty = true;
+  await run('readwrite', (s) => s.put(note));
+  void pushNote(note);
+}
+
+// 노트북 '타이핑 복습' 텍스트 저장 → 손필기와 한 노트로 클라우드 동기화(LWW).
+export async function saveNoteTypedText(id: string, typedText: string): Promise<void> {
+  const note = await getNote(id);
+  if (!note || note.typedText === typedText) return;
+  note.typedText = typedText;
+  note.updatedAt = Date.now();
   note._dirty = true;
   await run('readwrite', (s) => s.put(note));
   void pushNote(note);

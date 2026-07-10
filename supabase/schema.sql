@@ -27,6 +27,8 @@ alter table public.notes add column if not exists deleted    boolean not null de
 alter table public.notes add column if not exists deleted_at bigint;
 -- PDF 노트: 페이지별 필기(jsonb). 원본 PDF 파일은 Storage(note-files 버킷)에 별도 저장.
 alter table public.notes add column if not exists pdf_pages  jsonb;
+-- 노트북 '타이핑 복습' 텍스트(손필기와 한 노트로 동기화).
+alter table public.notes add column if not exists typed_text text;
 
 -- 행 레벨 보안 활성화 (자동 RLS가 켜져 있어도 명시적으로 이중 보장)
 alter table public.notes enable row level security;

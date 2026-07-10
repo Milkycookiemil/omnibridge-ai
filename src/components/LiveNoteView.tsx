@@ -16,7 +16,7 @@ import { useTranscription } from '../hooks/useTranscription';
 
 import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
-import { getNote, saveNoteStrokes, saveNotePdfPages } from '../lib/notesStore';
+import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteTypedText } from '../lib/notesStore';
 import { downloadPdf } from '../lib/pdfStore';
 import type { PdfPageStrokes } from '../lib/pdfInk';
 import { usePreferences } from '../lib/preferences';
@@ -122,8 +122,39 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const [aiMode, setAiMode] = useState<'npu' | 'cloud'>('npu');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // 노트북 모드의 고속 타이핑 복습 노트
+  // 노트북 모드의 고속 타이핑 복습 노트 (노트에 저장·클라우드 동기화)
   const [typedNote, setTypedNote] = useState('');
+  const typedSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 저장된 타이핑 텍스트 복원 (노트 열 때)
+  useEffect(() => {
+    if (!noteId) {
+      setTypedNote('');
+      return;
+    }
+    let cancelled = false;
+    getNote(noteId).then((note) => {
+      if (!cancelled) setTypedNote(note?.typedText ?? '');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId]);
+
+  // 타이핑 변경 → 디바운스 저장(손필기와 한 노트로 동기화)
+  const handleTypedChange = (text: string) => {
+    setTypedNote(text);
+    if (!noteId) return;
+    if (typedSaveTimer.current) clearTimeout(typedSaveTimer.current);
+    typedSaveTimer.current = setTimeout(() => void saveNoteTypedText(noteId, text), 800);
+  };
+
+  // 화면 이탈 시 타이핑 마지막 상태 flush
+  useEffect(() => {
+    return () => {
+      if (typedSaveTimer.current) clearTimeout(typedSaveTimer.current);
+    };
+  }, []);
 
 
   const showToastMsg = (msg: string) => {
@@ -579,8 +610,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
           </div>
           <textarea
             value={typedNote}
-            onChange={(e) => setTypedNote(e.target.value)}
-            placeholder="노트북에서 빠르게 타이핑하세요.&#10;태블릿의 손필기와 함께 하나의 노트로 0.1초 내 동기화됩니다."
+            onChange={(e) => handleTypedChange(e.target.value)}
+            placeholder="노트북에서 빠르게 타이핑하세요.&#10;태블릿의 손필기와 함께 하나의 노트로 동기화됩니다."
             className="flex-1 w-full resize-none outline-none p-6 text-slate-800 leading-relaxed text-[15px] bg-transparent placeholder:text-slate-300"
           />
         </div>

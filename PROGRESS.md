@@ -41,7 +41,13 @@
 - 실측: 필기→썸네일 생성(JPEG 3KB)·동기화, 대시보드 카드 이미지 표시(240×311) 확인.
 - **캡쳐 노트 썸네일**도 추가: 첫 슬라이드를 240px JPEG로 축소해 `saveNoteThumbnail`로 저장(`LectureCapture`). 실측: 슬라이드 저장 시 썸네일 생성(2KB)·동기화·카드 표시 확인.
 
-**⚠️ 외부 준비물 적용됨(이번 세션)**: Supabase Storage `note-files` 버킷(Private) + 정책 4종(read/insert/**update**/delete), `notes.pdf_pages` 컬럼.
+**노트북 타이핑 노트 동기화 (2026-07-10 세션) — 완료·검증:**
+- 노트북 모드 '타이핑 복습' 텍스트가 로컬 state일 뿐 미저장이던 것 → `note.typedText`로 저장·클라우드 동기화(strokes와 동일 디바운스+LWW 패턴).
+- `notesStore`: Note.typedText + NoteRow.typed_text + toRow/fromRow + `saveNoteTypedText`. `notes`에 `typed_text text` 컬럼 추가(마이그레이션 실행 완료).
+- `LiveNoteView`: 노트 열 때 typedText 복원 + 타이핑 시 0.8초 디바운스 저장. placeholder의 "0.1초" 문구는 실제(디바운스 LWW)에 맞게 "동기화"로 완화.
+- 실측: 타이핑→저장·동기화(_dirty false) / fresh IDB 재로그인→노트 열기→타이핑 48자 복원(크로스디바이스). (진짜 문자단위 실시간 동기화는 후속)
+
+**⚠️ 외부 준비물 적용됨(이번 세션)**: Supabase Storage `note-files` 버킷(Private) + 정책 4종(read/insert/**update**/delete), `notes` 컬럼 `pdf_pages`·`typed_text`.
 
 **바로 이어서 할 후보 (사용자와 정할 것):**
 - **B** 실제 호스팅·도메인 점검 (GitHub 자동배포는 이미 있음 → 도메인 연결·배포 확인)
