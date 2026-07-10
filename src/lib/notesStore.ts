@@ -174,7 +174,20 @@ export async function syncNotesFromCloud(): Promise<boolean> {
   if (!cloudReady()) return false;
   const uid = currentUid()!;
 
-  const localAll = await run<Note[]>('readonly', (s) => s.getAll());
+  // 0) 게스트→로그인 이관: 이 브라우저에서 게스트(user_id null)로 만든 노트를 현재
+  //    로그인 계정으로 귀속시킨다. 이후 dirty 업로드/pull에 자연히 포함된다.
+  let localAll = await run<Note[]>('readonly', (s) => s.getAll());
+  const guestNotes = localAll.filter((n) => (n.user_id ?? null) === null);
+  if (guestNotes.length > 0) {
+    for (const n of guestNotes) {
+      n.user_id = uid;
+      n._dirty = true;
+      await run('readwrite', (s) => s.put(n));
+    }
+    localAll = await run<Note[]>('readonly', (s) => s.getAll());
+    emitChange(); // 대시보드가 이관된 노트를 즉시 표시
+  }
+
   const mine = localAll.filter((n) => (n.user_id ?? null) === uid);
 
   // 1) dirty 로컬 우선 업로드
