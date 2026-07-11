@@ -14,6 +14,7 @@ import { Copy, Trash2 } from 'lucide-react';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
   pointInPolygon, strokePoints, strokeBounds, translateStroke, scaleStroke,
+  snapLineEnd, recognizeShape, shapeToPoints,
   type InkDelta, type InkSegment, type InkStroke, type InkLayer, type PenModel,
 } from '../../lib/inkEngine';
 import { LayerPanel } from './LayerPanel';
@@ -28,6 +29,8 @@ export interface InkCanvasHandle {
   getCanvas: () => HTMLCanvasElement | null;
   exportStrokes: () => InkStroke[];      // 노트 영속 저장용 스냅샷
   loadStrokes: (strokes: InkStroke[]) => void; // 저장된 노트 불러오기
+  undo: () => void;                      // #3 실행취소
+  redo: () => void;                      // #3 다시실행
 }
 
 interface InkCanvasProps {
@@ -40,6 +43,9 @@ interface InkCanvasProps {
   onDelta?: (delta: InkDelta) => void;
   showLayers?: boolean;                  // 레이어 패널 표시 여부
   selectMode?: boolean;                  // 올가미 선택 모드(그리기 대신 선택/변형)
+  straightLine?: boolean;                // #4 자: 직선 모드
+  shapeMode?: boolean;                   // #4 도형 보정 모드
+  onHistoryChange?: (s: { canUndo: boolean; canRedo: boolean }) => void; // #3 버튼 활성화용
 }
 
 type SelBox = { x: number; y: number; w: number; h: number };
@@ -50,7 +56,7 @@ type DragState =
   | { mode: 'scale'; anchor: { x: number; y: number }; baseBox: SelBox };
 
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
-  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false },
+  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -89,10 +95,26 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   const lassoRef = useRef<{ x: number; y: number }[] | null>(null);
   const applySelection = (s: Selection | null) => { selectionRef.current = s; selectedIdsRef.current = new Set(s?.ids ?? []); setSelection(s); };
 
+  // --- #3 실행취소/다시실행 히스토리 ---
+  // 각 사용자 동작을 {removed, added}로 기록 → 취소=added 제거+removed 복원, 재실행=반대.
+  type UndoEntry = { removed: InkStroke[]; added: InkStroke[] };
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const redoStackRef = useRef<UndoEntry[]>([]);
+  const pendingEraseRef = useRef<InkStroke[]>([]); // 획 지우개 드래그 누적(한 번에 취소)
+  const deepStroke = (st: InkStroke): InkStroke => ({ ...st, segs: st.segs.map((s) => ({ from: { ...s.from }, to: { ...s.to }, width: s.width })) });
+  const notifyHistory = () => onHistoryChange?.({ canUndo: undoStackRef.current.length > 0, canRedo: redoStackRef.current.length > 0 });
+  const pushUndo = (entry: UndoEntry) => {
+    if (!entry.removed.length && !entry.added.length) return;
+    undoStackRef.current.push(entry);
+    redoStackRef.current = [];
+    notifyHistory();
+  };
+
   // --- 드로잉 진행 상태 ---
   const drawingRef = useRef(false);
   const lastRef = useRef<{ x: number; y: number } | null>(null);
   const currentStrokeIdRef = useRef<string | null>(null);
+  const gestureRef = useRef<{ x: number; y: number }[] | null>(null); // #4 자/도형 제스처 점들
 
   // --- 레이어 오프스크린 캔버스 ---
   const getLayerCanvas = (layerId: string): HTMLCanvasElement => {
@@ -187,10 +209,36 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       }
     }
     if (hit.length > 0) {
+      // undo용: 지워진 획 원본을 드래그 동안 누적(pointerup에서 한 번에 기록)
+      for (const id of hit) { const st = strokesRef.current.get(id); if (st) pendingEraseRef.current.push(deepStroke(st)); }
       const op: InkDelta = { type: 'erase_strokes', strokeIds: hit };
       applyDelta(op);
       onDelta?.(op);
     }
+  };
+
+  // 옛 획 제거 + 새 획 추가 (로컬 즉시 + 원격: 삭제 + 세그먼트 재추가). undo 기록은 호출측.
+  const applyStrokeReplaceCore = (removeIds: string[], addStrokes: InkStroke[]) => {
+    const affected = new Set<string>();
+    for (const id of removeIds) { const st = strokesRef.current.get(id); if (st) affected.add(st.layerId); strokesRef.current.delete(id); }
+    for (const st of addStrokes) { strokesRef.current.set(st.id, st); affected.add(st.layerId); }
+    previewRef.current = null;
+    affected.forEach(rebuildLayer); composite();
+    if (removeIds.length) onDelta?.({ type: 'erase_strokes', strokeIds: removeIds });
+    for (const st of addStrokes) for (const s of st.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: st.penType, color: st.color, opacity: st.opacity, strokeId: st.id, layerId: st.layerId });
+  };
+
+  const undo = () => {
+    const e = undoStackRef.current.pop(); if (!e) return;
+    applyStrokeReplaceCore(e.added.map((s) => s.id), e.removed.map(deepStroke));
+    applySelection(null);
+    redoStackRef.current.push(e); notifyHistory();
+  };
+  const redo = () => {
+    const e = redoStackRef.current.pop(); if (!e) return;
+    applyStrokeReplaceCore(e.removed.map((s) => s.id), e.added.map(deepStroke));
+    applySelection(null);
+    undoStackRef.current.push(e); notifyHistory();
   };
 
   // --- 레이어 조작 (패널 콜백) ---
@@ -222,9 +270,13 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   useImperativeHandle(ref, () => ({
     applyDelta,
+    undo,
+    redo,
     clear: () => {
       strokesRef.current.clear();
       layerCanvasesRef.current.forEach((c) => c.getContext('2d')?.clearRect(0, 0, c.width, c.height));
+      undoStackRef.current = []; redoStackRef.current = []; notifyHistory();
+      applySelection(null);
       composite();
     },
     exportPng: () => canvasRef.current?.toDataURL('image/png') ?? null,
@@ -247,6 +299,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
         });
       }
       layersRef.current.forEach((l) => rebuildLayer(l.id));
+      undoStackRef.current = []; redoStackRef.current = []; notifyHistory();
+      applySelection(null);
       composite();
     },
   }));
@@ -320,20 +374,18 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     return isFinite(minX) ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : null;
   };
   const getStrokes = (ids: string[]) => ids.map((id) => strokesRef.current.get(id)).filter(Boolean) as InkStroke[];
-  // 옛 스트로크 → 새 스트로크 교체(로컬 즉시 + 원격: 삭제 + 재추가로 유실0 동기화).
+  // 옛 스트로크 → 새 스트로크 교체 (유실0 동기화 + #3 undo 기록).
   const replaceStrokes = (oldIds: string[], newStrokes: InkStroke[]) => {
-    const affected = new Set<string>();
-    for (const id of oldIds) { const st = strokesRef.current.get(id); if (st) affected.add(st.layerId); strokesRef.current.delete(id); }
-    for (const st of newStrokes) { strokesRef.current.set(st.id, st); affected.add(st.layerId); }
-    previewRef.current = null;
-    affected.forEach(rebuildLayer); composite();
-    if (oldIds.length) onDelta?.({ type: 'erase_strokes', strokeIds: oldIds });
-    for (const st of newStrokes) emitStrokeSegs(st);
+    const removed = getStrokes(oldIds).map(deepStroke);
+    applyStrokeReplaceCore(oldIds, newStrokes);
+    pushUndo({ removed, added: newStrokes.map(deepStroke) });
   };
   const deleteSelection = () => {
     const ids = [...selectedIdsRef.current]; if (!ids.length) return;
-    const op: InkDelta = { type: 'erase_strokes', strokeIds: ids };
-    applyDelta(op); onDelta?.(op); applySelection(null);
+    const removed = getStrokes(ids).map(deepStroke);
+    applyStrokeReplaceCore(ids, []);
+    pushUndo({ removed, added: [] });
+    applySelection(null);
   };
   const duplicateSelection = () => {
     const src = getStrokes([...selectedIdsRef.current]); if (!src.length) return;
@@ -341,6 +393,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     for (const st of copies) strokesRef.current.set(st.id, st);
     rebuildLayer(activeLayerRef.current); composite();
     for (const st of copies) emitStrokeSegs(st);
+    pushUndo({ removed: [], added: copies.map(deepStroke) });
     const box = boxOfStrokes(copies);
     if (box) applySelection({ ids: copies.map((s) => s.id), box });
   };
@@ -432,11 +485,45 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     applySelection(box ? { ids: news.map((s) => s.id), box } : null);
   };
 
+  // ===== #4 자(직선)/도형 보정 제스처 (놓을 때 한 번에 확정) =====
+  const isGesture = () => (straightLine || shapeMode) && pen.type !== 'eraser';
+  const buildStrokeFromPoints = (pts: { x: number; y: number }[]): InkStroke | null => {
+    if (pts.length < 2) return null;
+    const w = widthForPressure(pen, 0.5);
+    const segs = [];
+    for (let i = 1; i < pts.length; i++) segs.push({ from: { ...pts[i - 1] }, to: { ...pts[i] }, width: w });
+    return { id: genId(), layerId: activeLayerRef.current, penType: pen.type, color: pen.color, opacity: pen.opacity, segs };
+  };
+  const commitGestureStroke = (stroke: InkStroke) => {
+    strokesRef.current.set(stroke.id, stroke);
+    rebuildLayer(stroke.layerId); composite();
+    for (const s of stroke.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: stroke.penType, color: stroke.color, opacity: stroke.opacity, strokeId: stroke.id, layerId: stroke.layerId });
+    pushUndo({ removed: [], added: [deepStroke(stroke)] });
+  };
+  const drawGesturePreview = () => {
+    composite();
+    const ctx = canvasRef.current?.getContext('2d'); const pts = gestureRef.current;
+    if (!ctx || !pts || pts.length < 1) return;
+    ctx.save();
+    ctx.globalAlpha = pen.opacity; ctx.strokeStyle = pen.color; ctx.lineWidth = widthForPressure(pen, 0.5);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (straightLine) {
+      const a = pts[0], b = snapLineEnd(a, pts[pts.length - 1]);
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    } else {
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    }
+    ctx.stroke(); ctx.restore();
+  };
+
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
     const pt = toCanvasCoords(e);
     if (selectMode) { handleSelectDown(pt); return; }
     drawingRef.current = true;
+    if (isGesture()) { gestureRef.current = [pt]; return; }
     if (isStrokeEraser()) {
       eraseStrokesAt(pt);
       return;
@@ -449,6 +536,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     if (selectMode) { if (dragRef.current) handleSelectMove(toCanvasCoords(e)); return; }
     if (!drawingRef.current) return;
     const to = toCanvasCoords(e);
+
+    if (gestureRef.current) { gestureRef.current.push(to); drawGesturePreview(); return; }
 
     if (isStrokeEraser()) {
       eraseStrokesAt(to);
@@ -474,23 +563,37 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (selectMode) {
-      handleSelectUp();
-      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    if (selectMode) { handleSelectUp(); return; }
+
+    // #4 제스처(자/도형) 확정
+    if (gestureRef.current) {
+      const pts = gestureRef.current; gestureRef.current = null; drawingRef.current = false;
+      if (pts.length < 2) { composite(); return; }
+      let stroke: InkStroke | null;
+      if (straightLine) {
+        stroke = buildStrokeFromPoints([pts[0], snapLineEnd(pts[0], pts[pts.length - 1])]);
+      } else {
+        const shape = recognizeShape(pts);
+        stroke = buildStrokeFromPoints(shape ? shapeToPoints(shape) : pts);
+      }
+      if (stroke) commitGestureStroke(stroke); else composite();
       return;
     }
-    // 실제 획을 그리고 있었으면(획 지우개 제외) 놓는 순간 해당 레이어를 부드럽게 재렌더
-    const finishedLayer = drawingRef.current && !isStrokeEraser() && currentStrokeIdRef.current
-      ? activeLayerRef.current
-      : null;
+
+    // 획 지우개 드래그 종료 → undo 한 번에 기록
+    if (isStrokeEraser() && pendingEraseRef.current.length) {
+      pushUndo({ removed: pendingEraseRef.current, added: [] });
+      pendingEraseRef.current = [];
+    }
+    // 일반 필기/영역 지우개 종료: 부드럽게 재렌더 + undo 기록
+    const finishedId = drawingRef.current && !isStrokeEraser() ? currentStrokeIdRef.current : null;
+    const finishedLayer = finishedId ? activeLayerRef.current : null;
     drawingRef.current = false;
     lastRef.current = null;
     currentStrokeIdRef.current = null;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
-    if (finishedLayer) {
-      rebuildLayer(finishedLayer);
-      composite();
-    }
+    if (finishedLayer) { rebuildLayer(finishedLayer); composite(); }
+    if (finishedId) { const st = strokesRef.current.get(finishedId); if (st) pushUndo({ removed: [], added: [deepStroke(st)] }); }
   };
 
   return (

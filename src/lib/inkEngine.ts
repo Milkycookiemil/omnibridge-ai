@@ -57,6 +57,70 @@ export interface InkStroke {
   segs: { from: { x: number; y: number }; to: { x: number; y: number }; width: number }[];
 }
 
+// #4 자(직선): 끝점을 45° 배수에 가까우면 스냅한다(반듯한 선·수직·수평·대각).
+export function snapLineEnd(start: { x: number; y: number }, end: { x: number; y: number }): { x: number; y: number } {
+  const dx = end.x - start.x, dy = end.y - start.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return { ...end };
+  let ang = Math.atan2(dy, dx);
+  const step = Math.PI / 4; // 45°
+  const snapped = Math.round(ang / step) * step;
+  if (Math.abs(ang - snapped) < (12 * Math.PI) / 180) ang = snapped; // 12° 이내면 스냅
+  return { x: start.x + Math.cos(ang) * len, y: start.y + Math.sin(ang) * len };
+}
+
+// #4 도형 보정: 자유곡선 점들을 직선/타원/사각형으로 인식(없으면 null).
+export type RecognizedShape =
+  | { kind: 'line'; a: { x: number; y: number }; b: { x: number; y: number } }
+  | { kind: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
+  | { kind: 'rect'; x: number; y: number; w: number; h: number }
+  | null;
+
+export function recognizeShape(points: { x: number; y: number }[]): RecognizedShape {
+  if (points.length < 4) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  const w = maxX - minX, h = maxY - minY, diag = Math.hypot(w, h);
+  if (diag < 12) return null;
+  const start = points[0], end = points[points.length - 1];
+  const closed = Math.hypot(end.x - start.x, end.y - start.y) < diag * 0.25;
+  if (!closed) {
+    // 열린 곡선: start-end 직선에서 평균 수직편차가 작으면 직선으로 인식
+    let dev = 0;
+    for (const p of points) dev += distancePointToSegment(p, start, end);
+    dev /= points.length;
+    return dev < diag * 0.07 ? { kind: 'line', a: { ...start }, b: { ...end } } : null;
+  }
+  // 닫힘: 타원 vs 사각형 (경계 적합 오차 비교)
+  const cx = minX + w / 2, cy = minY + h / 2, rx = w / 2 || 1, ry = h / 2 || 1;
+  let ellErr = 0, rectErr = 0;
+  for (const p of points) {
+    ellErr += Math.abs(Math.hypot((p.x - cx) / rx, (p.y - cy) / ry) - 1);
+    const dmin = Math.min(Math.abs(p.x - minX), Math.abs(p.x - maxX), Math.abs(p.y - minY), Math.abs(p.y - maxY));
+    rectErr += dmin / diag;
+  }
+  ellErr /= points.length; rectErr /= points.length;
+  return ellErr <= rectErr
+    ? { kind: 'ellipse', cx, cy, rx, ry }
+    : { kind: 'rect', x: minX, y: minY, w, h };
+}
+
+// 인식된 도형을 폴리라인 점들로 변환(스트로크 세그먼트 생성용).
+export function shapeToPoints(shape: NonNullable<RecognizedShape>): { x: number; y: number }[] {
+  if (shape.kind === 'line') return [shape.a, shape.b];
+  if (shape.kind === 'rect') {
+    const { x, y, w, h } = shape;
+    return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }, { x, y }];
+  }
+  const out: { x: number; y: number }[] = [];
+  const N = 48;
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    out.push({ x: shape.cx + Math.cos(t) * shape.rx, y: shape.cy + Math.sin(t) * shape.ry });
+  }
+  return out;
+}
+
 // 점이 다각형(올가미 경로) 안에 있는지 — 레이 캐스팅.
 export function pointInPolygon(pt: { x: number; y: number }, poly: { x: number; y: number }[]): boolean {
   let inside = false;

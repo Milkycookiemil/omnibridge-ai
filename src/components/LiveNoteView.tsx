@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { SummaryCard } from '../types';
 import { dummyData } from '../data';
-import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard, Lasso } from 'lucide-react';
+import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard, Lasso, Ruler, Shapes, Undo2, Redo2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { uploadToGoogleDrive } from '../lib/drive';
@@ -121,6 +121,16 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const [showTask, setShowTask] = useState(false);
   const [aiMode, setAiMode] = useState<'npu' | 'cloud'>('npu');
   const [selectMode, setSelectMode] = useState(false); // 올가미 선택 모드
+  const [straightLine, setStraightLine] = useState(false); // #4 자(직선)
+  const [shapeMode, setShapeMode] = useState(false); // #4 도형 보정
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  // 필기 도구는 상호 배타(하나 켜면 나머지 끔). 펜 그리기로 돌아가려면 전부 off.
+  const pickTool = (tool: 'pen' | 'select' | 'straight' | 'shape') => {
+    setSelectMode(tool === 'select');
+    setStraightLine(tool === 'straight');
+    setShapeMode(tool === 'shape');
+  };
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // 노트북 모드의 고속 타이핑 복습 노트 (노트에 저장·클라우드 동기화)
@@ -435,6 +445,9 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       ref={inkRef}
       pen={activePen}
       selectMode={selectMode}
+      straightLine={straightLine}
+      shapeMode={shapeMode}
+      onHistoryChange={({ canUndo, canRedo }) => { setCanUndo(canUndo); setCanRedo(canRedo); }}
       backgroundStyle={backgroundStyle}
       onDelta={handleLocalDelta}
       showLayers={deviceMode !== 'laptop'} // 노트북 모드의 작은 미러 뷰에선 패널 숨김
@@ -463,22 +476,27 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       {isCanvasNote && (
         <>
           <div className="p-4 flex items-center justify-between border-b border-slate-200 relative z-20 bg-white/80 backdrop-blur-md">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              {/* #3 실행취소/다시실행 */}
+              <button onClick={() => inkRef.current?.undo()} disabled={!canUndo} title="실행취소 (Undo)"
+                className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Undo2 className="w-5 h-5" /></button>
+              <button onClick={() => inkRef.current?.redo()} disabled={!canRedo} title="다시실행 (Redo)"
+                className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Redo2 className="w-5 h-5" /></button>
+              <div className="w-px h-6 bg-slate-200 mx-0.5" />
               <PenToolbar
                 activeType={activeType}
                 activePen={activePen}
-                setActiveType={(t) => { setSelectMode(false); setActiveType(t); }}
+                setActiveType={(t) => { pickTool('pen'); setActiveType(t); }}
                 updateActivePen={updateActivePen}
               />
-              <div className="w-px h-6 bg-slate-200" />
-              <button
-                onClick={() => setSelectMode((v) => !v)}
-                title="올가미 선택 (획을 감싸 선택 → 이동·크기·색·복제·삭제)"
-                className={cn("p-2 rounded-lg transition-colors",
-                  selectMode ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}
-              >
-                <Lasso className="w-5 h-5" />
-              </button>
+              <div className="w-px h-6 bg-slate-200 mx-0.5" />
+              {/* 올가미 / 자(직선) / 도형 보정 — 상호 배타, 재탭 시 펜으로 복귀 */}
+              <button onClick={() => pickTool(selectMode ? 'pen' : 'select')} title="올가미 선택 (획을 감싸 → 이동·크기·색·복제·삭제)"
+                className={cn("p-2 rounded-lg transition-colors", selectMode ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}><Lasso className="w-5 h-5" /></button>
+              <button onClick={() => pickTool(straightLine ? 'pen' : 'straight')} title="자 (반듯한 직선, 각도 스냅)"
+                className={cn("p-2 rounded-lg transition-colors", straightLine ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}><Ruler className="w-5 h-5" /></button>
+              <button onClick={() => pickTool(shapeMode ? 'pen' : 'shape')} title="도형 보정 (자유곡선 → 직선·원·사각형)"
+                className={cn("p-2 rounded-lg transition-colors", shapeMode ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}><Shapes className="w-5 h-5" /></button>
             </div>
             {recordButton}
           </div>
