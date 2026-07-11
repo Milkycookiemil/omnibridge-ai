@@ -5,7 +5,7 @@ import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X } from 'lu
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import {
-  renderInkSegment, widthForPressure,
+  renderInkSegment, widthForPressure, cursorForPen,
   type InkSegment, type PenModel, type PenType,
 } from '../../lib/inkEngine';
 // 페이지별 비율좌표(0~1) 저장 구조 — 노트 영속화를 위해 공용 모듈에서 가져온다.
@@ -264,7 +264,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
         onPointerMove={draw}
         onPointerUp={stopDraw}
         onPointerLeave={stopDraw}
-        className="absolute inset-0 w-full h-full z-20 cursor-crosshair touch-none"
+        className="absolute inset-0 w-full h-full z-20 touch-none"
+        style={{ cursor: cursorForPen(pen) }}
       />
       
       {hasText === false && searchText && (

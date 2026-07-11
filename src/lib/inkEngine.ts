@@ -105,6 +105,29 @@ export function widthForPressure(model: PenModel, pressure: number): number {
   }
 }
 
+// 도구별 마우스 커서(SVG 데이터 URI). 십자 대신 실제 펜 굵기/모양을 보여준다.
+//  - 볼펜·연필·브러쉬·지우개: 회색 테두리 + 투명 내부의 원
+//  - 형광펜: 가로로 길고 세로로 낮은(납작한) 회색 테두리 사각형
+// scale = 표시 픽셀 / 캔버스 논리 픽셀 (리사이즈 시 실제 굵기와 커서를 맞춘다).
+export function cursorForPen(pen: PenModel, scale = 1): string {
+  const gray = '#94a3b8'; // slate-400
+  const sw = 1.5;
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+  if (pen.type === 'highlighter') {
+    const w = clamp(pen.baseWidth * scale, 16, 90);
+    const h = clamp(pen.baseWidth * scale * 0.5, 6, 26); // 가로 길고 세로 낮게
+    const W = Math.round(w + 4), H = Math.round(h + 4);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><rect x="2" y="2" width="${Math.round(w)}" height="${Math.round(h)}" rx="2" fill="none" stroke="${gray}" stroke-width="${sw}"/></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${Math.round(W / 2)} ${Math.round(H / 2)}, crosshair`;
+  }
+  // 볼펜·연필·브러쉬·지우개 → 원
+  const d = clamp(pen.baseWidth * scale, 8, 90);
+  const S = Math.round(d + 4);
+  const c = Math.round(S / 2);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}"><circle cx="${c}" cy="${c}" r="${Math.round(d / 2)}" fill="none" stroke="${gray}" stroke-width="${sw}"/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${c} ${c}, crosshair`;
+}
+
 // 펜 종류·필압을 반영해 from→to 한 세그먼트를 그린다 (로컬/원격/리플레이 공용).
 export function renderInkSegment(ctx: CanvasRenderingContext2D, seg: InkSegment) {
   ctx.save();

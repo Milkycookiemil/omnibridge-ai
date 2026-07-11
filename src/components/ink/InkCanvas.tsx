@@ -11,7 +11,7 @@
 // 원격/리플레이는 ref.applyDelta로 동일 경로를 타므로 미러링·유실0 리플레이가 그대로 유지된다.
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
-  renderInkSegment, widthForPressure, distancePointToSegment,
+  renderInkSegment, widthForPressure, distancePointToSegment, cursorForPen,
   type InkDelta, type InkSegment, type InkStroke, type InkLayer, type PenModel,
 } from '../../lib/inkEngine';
 import { LayerPanel } from './LayerPanel';
@@ -63,6 +63,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     activeLayerRef.current = id;
     setActiveLayerId(id);
   };
+
+  // 표시 스케일(표시 px / 캔버스 논리 px) — 커서 굵기를 실제 렌더 굵기와 맞춘다.
+  const [dispScale, setDispScale] = useState(1);
 
   // --- 드로잉 진행 상태 ---
   const drawingRef = useRef(false);
@@ -225,6 +228,20 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     },
   }));
 
+  // 표시 크기 추적 → 커서 스케일 갱신 (창 리사이즈 시 커서 굵기 보정)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width) setDispScale(rect.width / (canvas.width || 1));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, [width]);
+
   // 크기 변경 시 오프스크린 재생성 + 모델에서 재렌더 (내용 유실 없음)
   useEffect(() => {
     layerCanvasesRef.current.forEach((c) => {
@@ -313,7 +330,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
-        className="absolute inset-0 w-full h-full touch-none cursor-crosshair z-10"
+        className="absolute inset-0 w-full h-full touch-none z-10"
+        style={{ cursor: cursorForPen(pen, dispScale) }}
       />
       {showLayers && (
         <LayerPanel
