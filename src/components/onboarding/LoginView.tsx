@@ -19,12 +19,32 @@ const TRUST_SIGNALS = [
 
 type Mode = 'login' | 'signup';
 
+// 회원가입 필수 동의 한 줄 (개인정보보호법: 필수/선택 분리, 명시적 동의).
+function ConsentRow({ label, checked, onChange, onView }: {
+  label: string; checked: boolean; onChange: (v: boolean) => void; onView?: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <label className="flex items-center gap-2 text-xs font-medium text-slate-600 cursor-pointer flex-1 select-none">
+        <input type="checkbox" className="accent-blue-600 w-4 h-4 rounded shrink-0" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        {label}
+      </label>
+      {onView && (
+        <button type="button" onClick={onView} className="text-[11px] text-blue-600 underline hover:text-blue-700 shrink-0">보기</button>
+      )}
+    </div>
+  );
+}
+
 export function LoginView({ onGuest, onShowLegal }: LoginViewProps) {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 회원가입 필수 동의(만 14세·약관·개인정보 수집·국외이전)
+  const [agree, setAgree] = useState({ age: false, tos: false, privacy: false, transfer: false });
+  const allAgreed = agree.age && agree.tos && agree.privacy && agree.transfer;
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +52,7 @@ export function LoginView({ onGuest, onShowLegal }: LoginViewProps) {
 
     if (!email.trim()) return setError('이메일을 입력해 주세요.');
     if (password.length < 6) return setError('비밀번호는 6자 이상이어야 합니다.');
+    if (mode === 'signup' && !allAgreed) return setError('회원가입을 위해 필수 항목에 모두 동의해 주세요.');
 
     setLoading(true);
     try {
@@ -149,9 +170,28 @@ export function LoginView({ onGuest, onShowLegal }: LoginViewProps) {
               />
             </div>
 
+            {mode === 'signup' && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-600 w-4 h-4 rounded shrink-0"
+                    checked={allAgreed}
+                    onChange={(e) => { const v = e.target.checked; setAgree({ age: v, tos: v, privacy: v, transfer: v }); }}
+                  />
+                  전체 동의
+                </label>
+                <div className="h-px bg-slate-200" />
+                <ConsentRow label="(필수) 만 14세 이상입니다" checked={agree.age} onChange={(v) => setAgree((a) => ({ ...a, age: v }))} />
+                <ConsentRow label="(필수) 서비스 이용약관 동의" checked={agree.tos} onChange={(v) => setAgree((a) => ({ ...a, tos: v }))} onView={() => onShowLegal?.('terms')} />
+                <ConsentRow label="(필수) 개인정보 수집·이용 동의" checked={agree.privacy} onChange={(v) => setAgree((a) => ({ ...a, privacy: v }))} onView={() => onShowLegal?.('privacy')} />
+                <ConsentRow label="(필수) 개인정보 국외 이전 안내 확인" checked={agree.transfer} onChange={(v) => setAgree((a) => ({ ...a, transfer: v }))} onView={() => onShowLegal?.('privacy')} />
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || (mode === 'signup' && !allAgreed)}
               className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-bold shadow-lg shadow-blue-500/20 hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading && <Loader2 className="w-5 h-5 animate-spin" />}
