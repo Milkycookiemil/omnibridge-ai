@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { SummaryCard } from '../types';
 import { dummyData } from '../data';
-import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard } from 'lucide-react';
+import { Mic, Square, Zap, Lock, Bell, BellOff, Keyboard, Lasso } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { uploadToGoogleDrive } from '../lib/drive';
@@ -120,6 +120,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const [visibleCards, setVisibleCards] = useState<SummaryCard[]>([]);
   const [showTask, setShowTask] = useState(false);
   const [aiMode, setAiMode] = useState<'npu' | 'cloud'>('npu');
+  const [selectMode, setSelectMode] = useState(false); // 올가미 선택 모드
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // 노트북 모드의 고속 타이핑 복습 노트 (노트에 저장·클라우드 동기화)
@@ -433,6 +434,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     <InkCanvas
       ref={inkRef}
       pen={activePen}
+      selectMode={selectMode}
       backgroundStyle={backgroundStyle}
       onDelta={handleLocalDelta}
       showLayers={deviceMode !== 'laptop'} // 노트북 모드의 작은 미러 뷰에선 패널 숨김
@@ -461,12 +463,23 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       {isCanvasNote && (
         <>
           <div className="p-4 flex items-center justify-between border-b border-slate-200 relative z-20 bg-white/80 backdrop-blur-md">
-            <PenToolbar
-              activeType={activeType}
-              activePen={activePen}
-              setActiveType={setActiveType}
-              updateActivePen={updateActivePen}
-            />
+            <div className="flex items-center gap-2">
+              <PenToolbar
+                activeType={activeType}
+                activePen={activePen}
+                setActiveType={(t) => { setSelectMode(false); setActiveType(t); }}
+                updateActivePen={updateActivePen}
+              />
+              <div className="w-px h-6 bg-slate-200" />
+              <button
+                onClick={() => setSelectMode((v) => !v)}
+                title="올가미 선택 (획을 감싸 선택 → 이동·크기·색·복제·삭제)"
+                className={cn("p-2 rounded-lg transition-colors",
+                  selectMode ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}
+              >
+                <Lasso className="w-5 h-5" />
+              </button>
+            </div>
             {recordButton}
           </div>
           {inkCanvas}

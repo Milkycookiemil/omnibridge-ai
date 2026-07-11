@@ -57,6 +57,58 @@ export interface InkStroke {
   segs: { from: { x: number; y: number }; to: { x: number; y: number }; width: number }[];
 }
 
+// 점이 다각형(올가미 경로) 안에 있는지 — 레이 캐스팅.
+export function pointInPolygon(pt: { x: number; y: number }, poly: { x: number; y: number }[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    const intersect = (yi > pt.y) !== (yj > pt.y) && pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+// 스트로크의 모든 점을 순회 (from + 각 to). 바운딩·히트테스트 공용.
+export function strokePoints(stroke: InkStroke): { x: number; y: number }[] {
+  if (!stroke.segs.length) return [];
+  return [stroke.segs[0].from, ...stroke.segs.map((s) => s.to)];
+}
+
+// 스트로크 바운딩 박스 (굵기 반영). 빈 스트로크는 null.
+export function strokeBounds(stroke: InkStroke): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const pts = strokePoints(stroke);
+  if (!pts.length) return null;
+  const halfMax = Math.max(...stroke.segs.map((s) => s.width)) / 2;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+  }
+  return { minX: minX - halfMax, minY: minY - halfMax, maxX: maxX + halfMax, maxY: maxY + halfMax };
+}
+
+// 스트로크를 평행이동한 새 스트로크(깊은 복사, 새 id는 호출측에서 부여).
+export function translateStroke(stroke: InkStroke, dx: number, dy: number): InkStroke {
+  return {
+    ...stroke,
+    segs: stroke.segs.map((s) => ({
+      from: { x: s.from.x + dx, y: s.from.y + dy },
+      to: { x: s.to.x + dx, y: s.to.y + dy },
+      width: s.width,
+    })),
+  };
+}
+
+// 앵커(ax,ay) 기준으로 (sx,sy)배 확대/축소한 새 스트로크. 굵기는 평균 배율로.
+export function scaleStroke(stroke: InkStroke, ax: number, ay: number, sx: number, sy: number): InkStroke {
+  const ws = (Math.abs(sx) + Math.abs(sy)) / 2;
+  const tp = (p: { x: number; y: number }) => ({ x: ax + (p.x - ax) * sx, y: ay + (p.y - ay) * sy });
+  return {
+    ...stroke,
+    segs: stroke.segs.map((s) => ({ from: tp(s.from), to: tp(s.to), width: Math.max(0.5, s.width * ws) })),
+  };
+}
+
 // 점-선분 거리 (획 지우개 히트테스트용)
 export function distancePointToSegment(
   p: { x: number; y: number },

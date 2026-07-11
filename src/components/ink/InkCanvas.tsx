@@ -10,8 +10,10 @@
 // 동기화: 로컬 입력은 onDelta로 세그먼트(strokeId/layerId 포함)·erase_strokes 연산을 내보내고,
 // 원격/리플레이는 ref.applyDelta로 동일 경로를 타므로 미러링·유실0 리플레이가 그대로 유지된다.
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Copy, Trash2 } from 'lucide-react';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
+  pointInPolygon, strokePoints, strokeBounds, translateStroke, scaleStroke,
   type InkDelta, type InkSegment, type InkStroke, type InkLayer, type PenModel,
 } from '../../lib/inkEngine';
 import { LayerPanel } from './LayerPanel';
@@ -37,10 +39,18 @@ interface InkCanvasProps {
   backgroundImage?: string;              // 슬라이드 배경
   onDelta?: (delta: InkDelta) => void;
   showLayers?: boolean;                  // 레이어 패널 표시 여부
+  selectMode?: boolean;                  // 올가미 선택 모드(그리기 대신 선택/변형)
 }
 
+type SelBox = { x: number; y: number; w: number; h: number };
+type Selection = { ids: string[]; box: SelBox };
+type DragState =
+  | { mode: 'lasso' }
+  | { mode: 'move'; start: { x: number; y: number }; baseBox: SelBox }
+  | { mode: 'scale'; anchor: { x: number; y: number }; baseBox: SelBox };
+
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
-  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false },
+  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -67,8 +77,17 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   // 표시 스케일(표시 px / 캔버스 논리 px) — 커서 굵기를 실제 렌더 굵기와 맞춘다.
   const [dispScale, setDispScale] = useState(1);
-  // 고정 비율 페이지 크기(px) — 컨테이너에 균일 축소로 맞춰 찌그러짐 방지.
-  const [page, setPage] = useState({ w: 0, h: 0 });
+  // 고정 비율 페이지 크기·컨테이너 내 오프셋(px) — 균일 축소 + 오버레이 좌표 변환용.
+  const [page, setPage] = useState({ w: 0, h: 0, offX: 0, offY: 0 });
+
+  // --- 올가미 선택 상태 ---
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const selectionRef = useRef<Selection | null>(null);
+  const selectedIdsRef = useRef<Set<string>>(new Set());
+  const previewRef = useRef<null | { kind: 'move'; dx: number; dy: number } | { kind: 'scale'; ax: number; ay: number; sx: number; sy: number }>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const lassoRef = useRef<{ x: number; y: number }[] | null>(null);
+  const applySelection = (s: Selection | null) => { selectionRef.current = s; selectedIdsRef.current = new Set(s?.ids ?? []); setSelection(s); };
 
   // --- 드로잉 진행 상태 ---
   const drawingRef = useRef(false);
@@ -106,9 +125,15 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     const ctx = lc.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, lc.width, lc.height);
+    const pv = previewRef.current;
     for (const stroke of strokesRef.current.values()) {
       if (stroke.layerId !== layerId) continue;
-      renderStrokeSmoothed(ctx, stroke); // 완성된 획은 부드러운 곡선으로 재렌더
+      // 이동/크기 조절 중인 선택 획은 변형본으로 미리보기(저장 데이터는 불변).
+      let s = stroke;
+      if (pv && selectedIdsRef.current.has(stroke.id)) {
+        s = pv.kind === 'move' ? translateStroke(stroke, pv.dx, pv.dy) : scaleStroke(stroke, pv.ax, pv.ay, pv.sx, pv.sy);
+      }
+      renderStrokeSmoothed(ctx, s); // 완성된 획은 부드러운 곡선으로 재렌더
     }
   };
 
@@ -236,7 +261,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       if (!cw || !ch) return;
       let pw = cw, ph = cw / aspect;
       if (ph > ch) { ph = ch; pw = ch * aspect; } // 세로가 넘치면 높이에 맞춤
-      setPage({ w: pw, h: ph });
+      setPage({ w: pw, h: ph, offX: (cw - pw) / 2, offY: (ch - ph) / 2 });
       setDispScale(pw / width);
     };
     measure();
@@ -256,6 +281,17 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [width, height]);
 
+  // 선택 모드를 끄면 선택·프리뷰·올가미 경로를 정리한다.
+  useEffect(() => {
+    if (!selectMode) {
+      previewRef.current = null; dragRef.current = null; lassoRef.current = null;
+      if (selectionRef.current) { selectionRef.current = null; selectedIdsRef.current = new Set(); setSelection(null); }
+      layersRef.current.forEach((l) => rebuildLayer(l.id));
+      composite();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectMode]);
+
   // --- 포인터 입력 ---
   const toCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current!;
@@ -268,10 +304,139 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   const isStrokeEraser = () => pen.type === 'eraser' && (pen.eraserMode ?? 'area') === 'stroke';
 
+  // ===== 올가미 선택/변형 =====
+  const emitStrokeSegs = (st: InkStroke) => {
+    for (const s of st.segs) {
+      onDelta?.({ from: s.from, to: s.to, width: s.width, penType: st.penType, color: st.color, opacity: st.opacity, strokeId: st.id, layerId: st.layerId });
+    }
+  };
+  const boxOfStrokes = (strokes: InkStroke[]): SelBox | null => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const st of strokes) {
+      const b = strokeBounds(st); if (!b) continue;
+      if (b.minX < minX) minX = b.minX; if (b.minY < minY) minY = b.minY;
+      if (b.maxX > maxX) maxX = b.maxX; if (b.maxY > maxY) maxY = b.maxY;
+    }
+    return isFinite(minX) ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : null;
+  };
+  const getStrokes = (ids: string[]) => ids.map((id) => strokesRef.current.get(id)).filter(Boolean) as InkStroke[];
+  // 옛 스트로크 → 새 스트로크 교체(로컬 즉시 + 원격: 삭제 + 재추가로 유실0 동기화).
+  const replaceStrokes = (oldIds: string[], newStrokes: InkStroke[]) => {
+    const affected = new Set<string>();
+    for (const id of oldIds) { const st = strokesRef.current.get(id); if (st) affected.add(st.layerId); strokesRef.current.delete(id); }
+    for (const st of newStrokes) { strokesRef.current.set(st.id, st); affected.add(st.layerId); }
+    previewRef.current = null;
+    affected.forEach(rebuildLayer); composite();
+    if (oldIds.length) onDelta?.({ type: 'erase_strokes', strokeIds: oldIds });
+    for (const st of newStrokes) emitStrokeSegs(st);
+  };
+  const deleteSelection = () => {
+    const ids = [...selectedIdsRef.current]; if (!ids.length) return;
+    const op: InkDelta = { type: 'erase_strokes', strokeIds: ids };
+    applyDelta(op); onDelta?.(op); applySelection(null);
+  };
+  const duplicateSelection = () => {
+    const src = getStrokes([...selectedIdsRef.current]); if (!src.length) return;
+    const copies = src.map((st) => ({ ...translateStroke(st, 24, 24), id: genId() }));
+    for (const st of copies) strokesRef.current.set(st.id, st);
+    rebuildLayer(activeLayerRef.current); composite();
+    for (const st of copies) emitStrokeSegs(st);
+    const box = boxOfStrokes(copies);
+    if (box) applySelection({ ids: copies.map((s) => s.id), box });
+  };
+  const recolorSelection = (color: string) => {
+    const src = getStrokes([...selectedIdsRef.current]); if (!src.length) return;
+    const oldIds = src.map((s) => s.id);
+    const news = src.map((st) => ({ ...translateStroke(st, 0, 0), id: genId(), color }));
+    replaceStrokes(oldIds, news);
+    const box = boxOfStrokes(news);
+    applySelection(box ? { ids: news.map((s) => s.id), box } : null);
+  };
+
+  const HANDLE_HIT = 16; // 리사이즈 핸들 히트 반경(표시 px)
+  const drawLasso = () => {
+    composite();
+    const ctx = canvasRef.current?.getContext('2d');
+    const pts = lassoRef.current;
+    if (!ctx || !pts || pts.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5 / dispScale;
+    ctx.setLineDash([6 / dispScale, 4 / dispScale]);
+    ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke(); ctx.restore();
+  };
+  const handleSelectDown = (pt: { x: number; y: number }) => {
+    const sel = selectionRef.current;
+    if (sel) {
+      const hitR = HANDLE_HIT / dispScale;
+      const cx = sel.box.x + sel.box.w, cy = sel.box.y + sel.box.h;
+      if (Math.abs(pt.x - cx) <= hitR && Math.abs(pt.y - cy) <= hitR) {
+        dragRef.current = { mode: 'scale', anchor: { x: sel.box.x, y: sel.box.y }, baseBox: { ...sel.box } }; return;
+      }
+      if (pt.x >= sel.box.x && pt.x <= cx && pt.y >= sel.box.y && pt.y <= cy) {
+        dragRef.current = { mode: 'move', start: pt, baseBox: { ...sel.box } }; return;
+      }
+    }
+    dragRef.current = { mode: 'lasso' }; lassoRef.current = [pt]; applySelection(null);
+  };
+  const handleSelectMove = (pt: { x: number; y: number }) => {
+    const d = dragRef.current; if (!d) return;
+    if (d.mode === 'lasso') { lassoRef.current?.push(pt); drawLasso(); return; }
+    if (d.mode === 'move') {
+      const dx = pt.x - d.start.x, dy = pt.y - d.start.y;
+      previewRef.current = { kind: 'move', dx, dy };
+      rebuildLayer(activeLayerRef.current); composite();
+      setSelection((s) => s ? { ...s, box: { x: d.baseBox.x + dx, y: d.baseBox.y + dy, w: d.baseBox.w, h: d.baseBox.h } } : s);
+      return;
+    }
+    if (d.mode === 'scale') {
+      const minSize = 8 / dispScale;
+      const sx = Math.max(pt.x - d.anchor.x, minSize) / d.baseBox.w;
+      const sy = Math.max(pt.y - d.anchor.y, minSize) / d.baseBox.h;
+      previewRef.current = { kind: 'scale', ax: d.anchor.x, ay: d.anchor.y, sx, sy };
+      rebuildLayer(activeLayerRef.current); composite();
+      setSelection((s) => s ? { ...s, box: { x: d.anchor.x, y: d.anchor.y, w: d.baseBox.w * sx, h: d.baseBox.h * sy } } : s);
+      return;
+    }
+  };
+  const handleSelectUp = () => {
+    const d = dragRef.current; dragRef.current = null;
+    if (!d) return;
+    if (d.mode === 'lasso') {
+      const poly = lassoRef.current ?? []; lassoRef.current = null;
+      if (poly.length < 3) { composite(); return; }
+      const ids: string[] = [];
+      for (const st of strokesRef.current.values()) {
+        if (st.layerId !== activeLayerRef.current) continue;
+        const pts = strokePoints(st); if (!pts.length) continue;
+        let inside = 0;
+        for (const p of pts) if (pointInPolygon(p, poly)) inside++;
+        if (inside >= pts.length / 2) ids.push(st.id);
+      }
+      const box = ids.length ? boxOfStrokes(getStrokes(ids)) : null;
+      applySelection(box ? { ids, box } : null);
+      composite();
+      return;
+    }
+    const pv = previewRef.current; previewRef.current = null;
+    if (!pv) { rebuildLayer(activeLayerRef.current); composite(); return; }
+    const src = getStrokes([...selectedIdsRef.current]);
+    const oldIds = src.map((s) => s.id);
+    const news = src.map((st) => ({
+      ...(pv.kind === 'move' ? translateStroke(st, pv.dx, pv.dy) : scaleStroke(st, pv.ax, pv.ay, pv.sx, pv.sy)),
+      id: genId(),
+    }));
+    replaceStrokes(oldIds, news);
+    const box = boxOfStrokes(news);
+    applySelection(box ? { ids: news.map((s) => s.id), box } : null);
+  };
+
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
-    drawingRef.current = true;
     const pt = toCanvasCoords(e);
+    if (selectMode) { handleSelectDown(pt); return; }
+    drawingRef.current = true;
     if (isStrokeEraser()) {
       eraseStrokesAt(pt);
       return;
@@ -281,6 +446,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (selectMode) { if (dragRef.current) handleSelectMove(toCanvasCoords(e)); return; }
     if (!drawingRef.current) return;
     const to = toCanvasCoords(e);
 
@@ -308,6 +474,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (selectMode) {
+      handleSelectUp();
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+      return;
+    }
     // 실제 획을 그리고 있었으면(획 지우개 제외) 놓는 순간 해당 레이어를 부드럽게 재렌더
     const finishedLayer = drawingRef.current && !isStrokeEraser() && currentStrokeIdRef.current
       ? activeLayerRef.current
@@ -329,7 +500,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     >
       {/* 고정 비율 페이지: 컨테이너에 균일 축소로 맞춰 절대 찌그러지지 않는다. */}
       <div
-        className="relative bg-white shadow-md overflow-hidden"
+        className="relative bg-white shadow-md"
         style={{ width: page.w || '100%', height: page.h || '100%' }}
       >
         {backgroundImage && (
@@ -350,8 +521,33 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
           className="absolute inset-0 w-full h-full touch-none z-10"
-          style={{ cursor: cursorForPen(pen, dispScale) }}
+          style={{ cursor: selectMode ? 'crosshair' : cursorForPen(pen, dispScale) }}
         />
+
+        {/* 올가미 선택 오버레이 (페이지 박스 내부, 표시 좌표 = 논리좌표 × dispScale) */}
+        {selectMode && selection && (
+          <>
+            <div
+              className="absolute border-2 border-blue-500 border-dashed rounded-sm pointer-events-none z-[15]"
+              style={{ left: selection.box.x * dispScale, top: selection.box.y * dispScale, width: selection.box.w * dispScale, height: selection.box.h * dispScale }}
+            />
+            <div
+              className="absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-sm pointer-events-none z-[16]"
+              style={{ left: (selection.box.x + selection.box.w) * dispScale - 6, top: (selection.box.y + selection.box.h) * dispScale - 6 }}
+            />
+            <div
+              className="absolute flex items-center gap-1 bg-white rounded-xl shadow-lg border border-slate-200 px-2 py-1.5 z-20"
+              style={{ left: selection.box.x * dispScale, top: Math.max(selection.box.y * dispScale - 46, 4) }}
+            >
+              <button onClick={duplicateSelection} title="복제" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"><Copy className="w-4 h-4" /></button>
+              <button onClick={deleteSelection} title="삭제" className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500"><Trash2 className="w-4 h-4" /></button>
+              <div className="w-px h-5 bg-slate-200 mx-0.5" />
+              {['#334155', '#ef4444', '#3b82f6', '#10b981', '#f59e0b'].map((c) => (
+                <button key={c} onClick={() => recolorSelection(c)} title="색 변경" className="w-5 h-5 rounded-full border border-slate-200 hover:scale-110 transition-transform" style={{ backgroundColor: c }} />
+              ))}
+            </div>
+          </>
+        )}
       </div>
       {showLayers && (
         <LayerPanel
