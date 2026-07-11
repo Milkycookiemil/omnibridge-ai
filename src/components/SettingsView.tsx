@@ -16,6 +16,17 @@ import {
 } from '../lib/aiSummary';
 import { usePreferences } from '../lib/preferences';
 
+// 아직 실제로 동작하지 않는 데모/미구현 기능에 '곧 제공'을 정직하게 표시하기 위한 소품.
+const ComingSoonBadge = () => (
+  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">곧 제공</span>
+);
+const ComingSoonNote = ({ children }: { children: React.ReactNode }) => (
+  <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs font-semibold text-amber-800 flex items-start gap-2 leading-relaxed">
+    <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+    <span>{children}</span>
+  </div>
+);
+
 const DUMMY_DATA = {
   account: {
     name: "최동민", email: "gmail 연결됨",
@@ -399,14 +410,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                     </button>
                   </div>
                   
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                    <h5 className="font-bold text-sm text-slate-400 uppercase tracking-wider mb-4">저장소</h5>
-                    <div className="flex justify-between text-sm font-bold mb-2">
-                       <span className="text-slate-800">{data.sync.storageUsed}GB 사용</span>
-                       <span className="text-slate-400">{data.sync.storageTotal}GB</span>
-                    </div>
-                    <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden">
-                       <div className="h-full bg-teal-500 rounded-full" style={{ width: `${(data.sync.storageUsed / data.sync.storageTotal) * 100}%` }} />
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                    <h5 className="font-bold text-sm text-slate-400 uppercase tracking-wider flex items-center gap-2">저장소 사용량 <ComingSoonBadge /></h5>
+                    <ComingSoonNote>실제 사용량 표시는 준비 중입니다. 아래 수치는 예시이며 실제 저장 용량이 아닙니다.</ComingSoonNote>
+                    <div aria-disabled className="opacity-60 pointer-events-none select-none">
+                      <div className="flex justify-between text-sm font-bold mb-2">
+                         <span className="text-slate-800">{data.sync.storageUsed}GB 사용</span>
+                         <span className="text-slate-400">{data.sync.storageTotal}GB</span>
+                      </div>
+                      <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden">
+                         <div className="h-full bg-teal-500 rounded-full" style={{ width: `${(data.sync.storageUsed / data.sync.storageTotal) * 100}%` }} />
+                      </div>
                     </div>
                   </div>
                   
@@ -503,8 +517,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                   </div>
 
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                     <h5 className="font-bold text-sm text-slate-400 uppercase tracking-wider mb-4">하이브리드 AI 모드</h5>
-                     <div className="flex bg-slate-100 p-1.5 rounded-xl">
+                     <h5 className="font-bold text-sm text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">하이브리드 AI 모드 <ComingSoonBadge /></h5>
+                     <div aria-disabled className="flex bg-slate-100 p-1.5 rounded-xl opacity-60 pointer-events-none select-none">
                        <button 
                          onClick={() => handleAIModeChange('npu')}
                          className={cn("flex-1 flex justify-center py-2.5 rounded-lg text-sm font-bold transition-all items-center gap-2", data.ai.mode === 'npu' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}
@@ -525,7 +539,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                        </button>
                      </div>
                      <p className="text-sm text-slate-500 mt-4 leading-relaxed font-medium">
-                        <strong>자동 모드</strong>는 인터넷 연결 상태와 배터리 잔량에 따라 온디바이스와 클라우드 AI를 유연하게 전환합니다.
+                        온디바이스/클라우드 자동 전환은 <strong>준비 중</strong>입니다. 현재 AI 요약은 아래에 입력한 본인 키로 클라우드(Claude)에서 생성되며, 음성 전사는 기기 안에서 처리됩니다.
                      </p>
                   </div>
                   
@@ -706,12 +720,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                   <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex gap-3 items-start">
                     <Zap className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                     <div>
-                      <h4 className="font-bold text-amber-800 mb-1">Energy Echo</h4>
-                      <p className="text-sm text-amber-700/80 font-medium leading-relaxed">전력 소모를 실시간 추적해 온디바이스와 클라우드 AI 사용을 지능적으로 조절합니다.</p>
+                      <h4 className="font-bold text-amber-800 mb-1 flex items-center gap-2">Energy Echo <ComingSoonBadge /></h4>
+                      <p className="text-sm text-amber-700/80 font-medium leading-relaxed">전력 소모를 추적해 온디바이스·클라우드 AI 사용을 자동 조절하는 기능입니다. 준비 중이라 아래 설정은 아직 동작하지 않습니다.</p>
                     </div>
                   </div>
 
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                  <div aria-disabled className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col opacity-60 pointer-events-none select-none">
                     <div className="p-6 border-b border-slate-100 flex items-center justify-between">
                       <div>
                         <h4 className="font-bold text-slate-800 mb-1">저전력 모드</h4>
