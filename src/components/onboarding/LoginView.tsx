@@ -12,9 +12,9 @@ interface LoginViewProps {
 }
 
 const TRUST_SIGNALS = [
-  { icon: ShieldCheck, color: 'text-emerald-500', bg: 'bg-emerald-50', title: '필기 유실 제로', desc: '0.1초 무결성 동기화로 기기를 바꿔도 한 획도 잃지 않습니다.' },
-  { icon: Cloud, color: 'text-blue-500', bg: 'bg-blue-50', title: '구독료 $0', desc: '내 구글 드라이브에 저장하는 BYOS 방식. 월 정액 결제가 없습니다.' },
-  { icon: Zap, color: 'text-violet-500', bg: 'bg-violet-50', title: '온디바이스 AI', desc: 'NPU 기반 실시간 요약. 녹음은 내 기기 안에서만 처리됩니다.' },
+  { icon: ShieldCheck, color: 'text-emerald-500', bg: 'bg-emerald-50', title: '필기 유실 제로', desc: '무결성 동기화로 기기를 바꿔도 한 획도 잃지 않습니다.' },
+  { icon: Cloud, color: 'text-blue-500', bg: 'bg-blue-50', title: '어디서나 이어서', desc: '태블릿·노트북·브라우저 어디서 열어도 클라우드에서 자동으로 이어집니다.' },
+  { icon: Zap, color: 'text-violet-500', bg: 'bg-violet-50', title: '온디바이스 전사', desc: '음성 전사를 기기 안에서 처리해 녹음이 밖으로 새지 않습니다. AI 요약은 선택.' },
 ];
 
 type Mode = 'login' | 'signup';
@@ -98,7 +98,7 @@ export function LoginView({ onGuest, onShowLegal }: LoginViewProps) {
         </div>
 
         <div className="relative z-10 text-xs text-slate-500">
-          한성대학교 멀티모달 AI 콘텐츠 기획 제작 실습 · 졸업 프로젝트
+          언제 어디서나 이어지는 멀티모달 필기 · OmniBridge AI
         </div>
       </div>
 
