@@ -69,7 +69,7 @@ claude                # 대화형 세션 시작
 
 ### 배포 규칙 (중요)
 
-- **배포는 `git push origin main`으로만 한다.**
+- **배포는 `git push origin master`로만 한다.** (이 저장소의 배포 브랜치는 `master`. GitHub Actions가 `master` push 시 GitHub Pages로 자동 배포)
 - Netlify CLI, Vercel CLI 등으로 직접 배포하지 마.
 - 배포·서버 구성은 기존 방식 그대로 유지하고 임의로 바꾸지 마.
 
@@ -132,7 +132,7 @@ settings.json에 hooks를 등록한다. "매번 X 할 때마다 Y 해줘" 같은
 - **빌드:** `npm run build`
 - **타입 체크:** `npx tsc --noEmit` (커밋 전 0에러 유지)
 - **테스트:** 별도 테스트 러너 없음 — 타입체크 + 빌드 + 프리뷰 런타임 검증으로 확인
-- **배포:** `git push origin main` (자동 배포)
+- **배포:** `git push origin master` (GitHub Actions → GitHub Pages 자동 배포)
 - **주의사항:**
   - 동기화 아키텍처: CRDT 델타 → Supabase Realtime broadcast(실시간 릴레이, 0.1초) → Debounce 후 `.ob`로 Google Drive 영속 저장. 유실 0 무결성이 핵심 가치이므로 획 삭제조차 `erase_strokes` append-only 연산으로 CRDT에 쌓는 구조를 깨지 말 것.
   - Supabase 키가 없으면 **시뮬레이션 모드**로 정상 동작(발표·시연 가능). 실연동은 `.env.local`에 `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` 입력 시 활성화.
