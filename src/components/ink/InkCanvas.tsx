@@ -11,7 +11,7 @@
 // 원격/리플레이는 ref.applyDelta로 동일 경로를 타므로 미러링·유실0 리플레이가 그대로 유지된다.
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
-  renderInkSegment, widthForPressure, distancePointToSegment, cursorForPen,
+  renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
   type InkDelta, type InkSegment, type InkStroke, type InkLayer, type PenModel,
 } from '../../lib/inkEngine';
 import { LayerPanel } from './LayerPanel';
@@ -108,12 +108,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     ctx.clearRect(0, 0, lc.width, lc.height);
     for (const stroke of strokesRef.current.values()) {
       if (stroke.layerId !== layerId) continue;
-      for (const s of stroke.segs) {
-        renderInkSegment(ctx, {
-          from: s.from, to: s.to, width: s.width,
-          penType: stroke.penType, color: stroke.color, opacity: stroke.opacity,
-        });
-      }
+      renderStrokeSmoothed(ctx, stroke); // 완성된 획은 부드러운 곡선으로 재렌더
     }
   };
 
@@ -313,10 +308,18 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // 실제 획을 그리고 있었으면(획 지우개 제외) 놓는 순간 해당 레이어를 부드럽게 재렌더
+    const finishedLayer = drawingRef.current && !isStrokeEraser() && currentStrokeIdRef.current
+      ? activeLayerRef.current
+      : null;
     drawingRef.current = false;
     lastRef.current = null;
     currentStrokeIdRef.current = null;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    if (finishedLayer) {
+      rebuildLayer(finishedLayer);
+      composite();
+    }
   };
 
   return (

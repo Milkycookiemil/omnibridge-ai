@@ -105,6 +105,58 @@ export function widthForPressure(model: PenModel, pressure: number): number {
   }
 }
 
+// 스트로크 전체를 부드러운 곡선(중점 이차베지어)으로 렌더해 '각짐'을 없앤다.
+//  - 데이터 모델(segs)·동기화는 그대로. 렌더만 부드럽게 → 유실0·리플레이 무손상.
+//  - 볼펜·연필·브러쉬만 스무딩(둥근 캡이라 이음새 없음). 형광펜·지우개는 기존 직선 유지
+//    (형광펜 납작 캡은 곡선 분할 시 이음새가 생겨서 제외).
+export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: InkStroke) {
+  const segs = stroke.segs;
+  if (!segs.length) return;
+  if (stroke.penType === 'highlighter' || stroke.penType === 'eraser' || segs.length < 2) {
+    for (const s of segs) {
+      renderInkSegment(ctx, {
+        from: s.from, to: s.to, width: s.width,
+        penType: stroke.penType, color: stroke.color, opacity: stroke.opacity,
+      });
+    }
+    return;
+  }
+  const pts = [segs[0].from, ...segs.map((s) => s.to)];
+  const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalAlpha = stroke.opacity;
+  ctx.strokeStyle = stroke.color;
+  // 시작점 → 첫 중점
+  const firstMid = mid(pts[0], pts[1]);
+  ctx.lineWidth = segs[0].width;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  ctx.lineTo(firstMid.x, firstMid.y);
+  ctx.stroke();
+  // 중간: 중점 →(control=실제 점)→ 다음 중점, 굵기는 해당 세그먼트
+  for (let i = 1; i < pts.length - 1; i++) {
+    const m0 = mid(pts[i - 1], pts[i]);
+    const m1 = mid(pts[i], pts[i + 1]);
+    ctx.lineWidth = segs[i].width;
+    ctx.beginPath();
+    ctx.moveTo(m0.x, m0.y);
+    ctx.quadraticCurveTo(pts[i].x, pts[i].y, m1.x, m1.y);
+    ctx.stroke();
+  }
+  // 마지막 중점 → 끝점
+  const n = pts.length - 1;
+  const lastMid = mid(pts[n - 1], pts[n]);
+  ctx.lineWidth = segs[n - 1].width;
+  ctx.beginPath();
+  ctx.moveTo(lastMid.x, lastMid.y);
+  ctx.lineTo(pts[n].x, pts[n].y);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // 도구별 마우스 커서(SVG 데이터 URI). 십자 대신 실제 펜 굵기/모양을 보여준다.
 //  - 볼펜·연필·브러쉬·지우개: 회색 테두리 + 투명 내부의 원
 //  - 형광펜: 가로로 길고 세로로 낮은(납작한) 회색 테두리 사각형
