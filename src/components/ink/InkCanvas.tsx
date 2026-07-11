@@ -44,6 +44,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // --- 모델 (렌더와 무관한 데이터는 ref로: 포인터 이벤트 중 리렌더 방지) ---
   const strokesRef = useRef<Map<string, InkStroke>>(new Map());
@@ -66,6 +67,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   // 표시 스케일(표시 px / 캔버스 논리 px) — 커서 굵기를 실제 렌더 굵기와 맞춘다.
   const [dispScale, setDispScale] = useState(1);
+  // 고정 비율 페이지 크기(px) — 컨테이너에 균일 축소로 맞춰 찌그러짐 방지.
+  const [page, setPage] = useState({ w: 0, h: 0 });
 
   // --- 드로잉 진행 상태 ---
   const drawingRef = useRef(false);
@@ -228,19 +231,24 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     },
   }));
 
-  // 표시 크기 추적 → 커서 스케일 갱신 (창 리사이즈 시 커서 굵기 보정)
+  // 컨테이너에 고정 비율 페이지를 균일 축소로 맞춘다(찌그러짐 0) + 커서 스케일 갱신.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || typeof ResizeObserver === 'undefined') return;
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const aspect = width / height;
     const measure = () => {
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width) setDispScale(rect.width / (canvas.width || 1));
+      const cw = el.clientWidth, ch = el.clientHeight;
+      if (!cw || !ch) return;
+      let pw = cw, ph = cw / aspect;
+      if (ph > ch) { ph = ch; pw = ch * aspect; } // 세로가 넘치면 높이에 맞춤
+      setPage({ w: pw, h: ph });
+      setDispScale(pw / width);
     };
     measure();
     const ro = new ResizeObserver(measure);
-    ro.observe(canvas);
+    ro.observe(el);
     return () => ro.disconnect();
-  }, [width]);
+  }, [width, height]);
 
   // 크기 변경 시 오프스크린 재생성 + 모델에서 재렌더 (내용 유실 없음)
   useEffect(() => {
@@ -312,27 +320,36 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   return (
-    <div className={`relative ${className ?? ''}`}>
-      {backgroundImage && (
-        <img
-          src={backgroundImage}
-          alt="필기 배경"
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
-          draggable={false}
+    <div
+      ref={containerRef}
+      className={`relative flex items-center justify-center overflow-hidden bg-slate-100 ${className ?? ''}`}
+    >
+      {/* 고정 비율 페이지: 컨테이너에 균일 축소로 맞춰 절대 찌그러지지 않는다. */}
+      <div
+        className="relative bg-white shadow-md overflow-hidden"
+        style={{ width: page.w || '100%', height: page.h || '100%' }}
+      >
+        {backgroundImage && (
+          <img
+            src={backgroundImage}
+            alt="필기 배경"
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+            draggable={false}
+          />
+        )}
+        {backgroundStyle && <div className="absolute inset-0 pointer-events-none" style={backgroundStyle} />}
+        <canvas
+          ref={canvasRef}
+          width={width}
+          height={height}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+          className="absolute inset-0 w-full h-full touch-none z-10"
+          style={{ cursor: cursorForPen(pen, dispScale) }}
         />
-      )}
-      {backgroundStyle && <div className="absolute inset-0 pointer-events-none" style={backgroundStyle} />}
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
-        className="absolute inset-0 w-full h-full touch-none z-10"
-        style={{ cursor: cursorForPen(pen, dispScale) }}
-      />
+      </div>
       {showLayers && (
         <LayerPanel
           layers={layers}

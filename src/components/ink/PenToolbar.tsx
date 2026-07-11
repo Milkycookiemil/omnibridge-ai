@@ -104,6 +104,23 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
           <div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-2xl border border-slate-200 shadow-xl p-4 z-30 space-y-4">
             <div className="text-xs font-bold text-slate-500">{PEN_META[activeType].label} 설정</div>
 
+            {/* 실시간 미리보기: 현재 색상·굵기·불투명도·펜 종류가 실제로 어떻게 그려지는지 */}
+            {!isEraser && (
+              <div className="rounded-xl bg-slate-50 border border-slate-200 h-14 flex items-center justify-center overflow-hidden">
+                <svg width="100%" height="100%" viewBox="0 0 220 48" preserveAspectRatio="xMidYMid meet">
+                  <path
+                    d="M14,34 C48,6 78,42 110,24 S180,10 206,26"
+                    fill="none"
+                    stroke={activePen.color}
+                    strokeWidth={Math.max(1, Math.min(activePen.baseWidth, 28))}
+                    strokeLinecap={activeType === 'highlighter' ? 'butt' : 'round'}
+                    strokeLinejoin="round"
+                    opacity={activePen.opacity}
+                  />
+                </svg>
+              </div>
+            )}
+
             {!isEraser && (
               <div>
                 <div className="flex items-center justify-between mb-2">
