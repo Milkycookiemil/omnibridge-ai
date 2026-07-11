@@ -135,13 +135,13 @@ export function ReplayView({ initialInkGroupId, onNavigate }: ReplayViewProps) {
                 )}
               </g>
               
-              {/* Ink Group 4: 18:45 BYOS */}
+              {/* Ink Group 4: 18:45 비용 구조 */}
               <g 
                 onClick={() => jumpToInk('ink-4')}
                 className="cursor-pointer transition-all duration-300 transform origin-left"
               >
                 <path d="M 50 380 L 550 380" stroke="#334155" strokeWidth="2" opacity="0.4" strokeDasharray="10 10"/>
-                <text x="50" y="430" fill="currentColor" className="text-slate-800 text-xl font-bold font-sans">BYOS = 스토리지 비용 $0</text>
+                <text x="50" y="430" fill="currentColor" className="text-slate-800 text-xl font-bold font-sans">비용 구조 = 고정비 + 변동비</text>
                 <path d="M 50 450 Q 100 440, 200 455" stroke="#334155" strokeWidth="2" opacity="0.7" />
                 <path d="M 50 460 Q 150 490, 300 450" stroke="#334155" strokeWidth="3" opacity="0.8" />
                 {activeInk === 'ink-4' && (

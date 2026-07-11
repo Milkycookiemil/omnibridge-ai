@@ -400,7 +400,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                   </div>
                   
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                    <h5 className="font-bold text-sm text-slate-400 uppercase tracking-wider mb-4">저장소 (BYOS)</h5>
+                    <h5 className="font-bold text-sm text-slate-400 uppercase tracking-wider mb-4">저장소</h5>
                     <div className="flex justify-between text-sm font-bold mb-2">
                        <span className="text-slate-800">{data.sync.storageUsed}GB 사용</span>
                        <span className="text-slate-400">{data.sync.storageTotal}GB</span>
@@ -509,7 +509,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                          onClick={() => handleAIModeChange('npu')}
                          className={cn("flex-1 flex justify-center py-2.5 rounded-lg text-sm font-bold transition-all items-center gap-2", data.ai.mode === 'npu' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}
                        >
-                         <Lock className="w-4 h-4"/> 프라이버시 (NPU)
+                         <Lock className="w-4 h-4"/> 프라이버시 (온디바이스)
                        </button>
                        <button 
                          onClick={() => handleAIModeChange('cloud')}
@@ -525,7 +525,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                        </button>
                      </div>
                      <p className="text-sm text-slate-500 mt-4 leading-relaxed font-medium">
-                        <strong>자동 모드</strong>는 인터넷 연결 상태와 배터리 잔량에 따라 온디바이스 NPU와 클라우드 AI를 유연하게 전환합니다.
+                        <strong>자동 모드</strong>는 인터넷 연결 상태와 배터리 잔량에 따라 온디바이스와 클라우드 AI를 유연하게 전환합니다.
                      </p>
                   </div>
                   
@@ -707,7 +707,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                     <Zap className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                     <div>
                       <h4 className="font-bold text-amber-800 mb-1">Energy Echo</h4>
-                      <p className="text-sm text-amber-700/80 font-medium leading-relaxed">전력 소모를 실시간 추적해 NPU와 Cloud AI 사용을 지능적으로 조절합니다.</p>
+                      <p className="text-sm text-amber-700/80 font-medium leading-relaxed">전력 소모를 실시간 추적해 온디바이스와 클라우드 AI 사용을 지능적으로 조절합니다.</p>
                     </div>
                   </div>
 
@@ -937,7 +937,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                      </div>
                      <div>
                         <h4 className="font-bold text-slate-800 mb-1">Google Drive 연동</h4>
-                        <p className="text-sm text-slate-500 font-medium leading-relaxed">서버 없이 내 클라우드에 안전하게 저장하는 BYOS(Bring Your Own Storage) 인프라 구축용입니다.</p>
+                        <p className="text-sm text-slate-500 font-medium leading-relaxed">노트를 내 Google Drive로 내보내 백업하는 선택 기능입니다. 기본 저장은 계정 클라우드에 자동으로 됩니다.</p>
                      </div>
                   </div>
                </div>

@@ -34,7 +34,7 @@ export function TopBar({ onNavigate, onLogout }: TopBarProps) {
           {!isOnline ? (
              <div className="flex items-center gap-2">
                <div className="w-2.5 h-2.5 bg-amber-400 rounded-full animate-pulse"></div>
-               <span className="text-xs font-semibold tracking-wider uppercase text-slate-600">로컬 NPU 가동 중 - 오프라인 필기 안전 보장</span>
+               <span className="text-xs font-semibold tracking-wider uppercase text-slate-600">오프라인 모드 - 필기 로컬 안전 보관</span>
              </div>
           ) : (
              <>
@@ -62,8 +62,8 @@ export function TopBar({ onNavigate, onLogout }: TopBarProps) {
                 
                 <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
                    {driveStatus === 'saving' && <span className="text-amber-500 flex items-center gap-1"><Cloud className="w-3 h-3 animate-pulse"/> 저장 중...</span>}
-                   {driveStatus === 'saved' && <span className="text-slate-600 flex items-center gap-1"><Cloud className="w-3 h-3"/> 마지막 구글 드라이브 동기화 시각: 방금 전</span>}
-                   {driveStatus === 'idle' && lastDriveSync && <span className="text-slate-600 flex items-center gap-1"><Cloud className="w-3 h-3"/> 마지막 구글 드라이브 동기화 시각: {lastDriveSync}</span>}
+                   {driveStatus === 'saved' && <span className="text-slate-600 flex items-center gap-1"><Cloud className="w-3 h-3"/> 마지막 동기화: 방금 전</span>}
+                   {driveStatus === 'idle' && lastDriveSync && <span className="text-slate-600 flex items-center gap-1"><Cloud className="w-3 h-3"/> 마지막 동기화: {lastDriveSync}</span>}
                    {driveStatus === 'idle' && !lastDriveSync && <span className="text-slate-400 flex items-center gap-1"><Cloud className="w-3 h-3"/> 동기화 대기 중</span>}
                 </div>
              </>

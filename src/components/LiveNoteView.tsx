@@ -475,7 +475,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     </>
   );
 
-  // 하단 도킹 패널 오른쪽 컬럼에 들어갈 요약 내용 (NPU/Cloud 토글 + 요약 카드)
+  // 하단 도킹 패널 오른쪽 컬럼에 들어갈 요약 내용 (온디바이스/Cloud 토글 + 요약 카드)
   const summaryContent = (
     <div className="space-y-2.5">
       <div className="flex items-center bg-white border border-slate-200 p-1 rounded-full shadow-sm w-max mb-1">
@@ -483,7 +483,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
           onClick={() => handleModeSwitch()}
           className={cn("px-2.5 py-1 text-[11px] font-bold rounded-full flex items-center gap-1 transition-all", aiMode === 'npu' ? "bg-slate-100 text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600")}
         >
-          <Lock className="w-3 h-3" /> NPU
+          <Lock className="w-3 h-3" /> 온디바이스
         </button>
         <button
           onClick={() => handleModeSwitch()}
