@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, cursorForPen,
-  snapLineEnd, recognizeShape, shapeToPoints,
+  snapLineEnd, recognizeShape, shapeToPoints, pointInPolygon,
   type InkSegment, type PenModel, type PenType,
 } from '../../lib/inkEngine';
 // 페이지별 비율좌표(0~1) 저장 구조 — 노트 영속화를 위해 공용 모듈에서 가져온다.
@@ -29,12 +29,16 @@ interface PdfPageProps {
   onStrokesChange?: (pageNumber: number, strokes: PageStroke[]) => void; // 필기 변경 알림(저장용)
   straightLine?: boolean; // #4 자(직선)
   shapeMode?: boolean;    // #4 도형 보정
+  selectMode?: boolean;   // 올가미 선택 모드
+  registerHandle?: (page: number, h: { undo: () => void; redo: () => void } | null) => void; // 페이지 undo/redo 등록
+  onHistoryChange?: (page: number, s: { canUndo: boolean; canRedo: boolean }) => void;
 }
 
 const PdfPage: React.FC<PdfPageProps> = ({
   pageNumber, pdfDocument, pen, scale, searchText,
   highlightedIndexes, currentMatchIndex, onPageMatchCalculated, onVisible,
   initialStrokes, onStrokesChange, straightLine = false, shapeMode = false,
+  selectMode = false, registerHandle, onHistoryChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -53,6 +57,61 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const lastRatioRef = useRef<InkPoint | null>(null);
   const gestureRef = useRef<InkPoint[] | null>(null); // #4 자/도형 제스처(비율좌표)
   const isGestureMode = () => (straightLine || shapeMode) && pen.type !== 'eraser';
+
+  // ===== undo/redo (스냅샷 기반) =====
+  const undoStackRef = useRef<PageStroke[][]>([]);
+  const redoStackRef = useRef<PageStroke[][]>([]);
+  const notifyHist = () => onHistoryChange?.(pageNumber, { canUndo: undoStackRef.current.length > 0, canRedo: redoStackRef.current.length > 0 });
+  // 모든 사용자 변경은 commit을 통해 → 직전 상태를 undo 스택에 스냅샷.
+  const commit = (next: PageStroke[]) => {
+    undoStackRef.current.push(strokesRef.current);
+    redoStackRef.current = [];
+    strokesRef.current = next; setStrokes(next); onStrokesChange?.(pageNumber, next);
+    notifyHist();
+  };
+  const undo = () => {
+    if (!undoStackRef.current.length) return;
+    redoStackRef.current.push(strokesRef.current);
+    const prev = undoStackRef.current.pop()!;
+    strokesRef.current = prev; setStrokes(prev); onStrokesChange?.(pageNumber, prev);
+    setSelection(null); selectionRef.current = null;
+    notifyHist();
+  };
+  const redo = () => {
+    if (!redoStackRef.current.length) return;
+    undoStackRef.current.push(strokesRef.current);
+    const nxt = redoStackRef.current.pop()!;
+    strokesRef.current = nxt; setStrokes(nxt); onStrokesChange?.(pageNumber, nxt);
+    setSelection(null); selectionRef.current = null;
+    notifyHist();
+  };
+  // 최신 클로저를 참조하는 안정 핸들 등록.
+  const undoFnRef = useRef(undo); undoFnRef.current = undo;
+  const redoFnRef = useRef(redo); redoFnRef.current = redo;
+  useEffect(() => {
+    registerHandle?.(pageNumber, { undo: () => undoFnRef.current(), redo: () => redoFnRef.current() });
+    return () => registerHandle?.(pageNumber, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageNumber]);
+
+  // ===== 올가미 선택 (비율좌표, 참조 기반) =====
+  type PBox = { x: number; y: number; w: number; h: number };
+  const [selection, setSelection] = useState<{ strokes: PageStroke[]; box: PBox } | null>(null);
+  const selectionRef = useRef<{ strokes: PageStroke[]; box: PBox } | null>(null);
+  const selDragRef = useRef<null | { mode: 'lasso' } | { mode: 'move'; start: InkPoint; baseBox: PBox }>(null);
+  const selLassoRef = useRef<InkPoint[] | null>(null);
+  const selPreviewRef = useRef<null | { dx: number; dy: number }>(null);
+  const applySel = (s: { strokes: PageStroke[]; box: PBox } | null) => { selectionRef.current = s; setSelection(s); };
+
+  const pgPoints = (st: PageStroke) => (st.segs.length ? [st.segs[0].from, ...st.segs.map((s) => s.to)] : []);
+  const pgBox = (list: PageStroke[]): PBox | null => {
+    let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+    for (const st of list) for (const p of pgPoints(st)) { a = Math.min(a, p.x); b = Math.min(b, p.y); c = Math.max(c, p.x); d = Math.max(d, p.y); }
+    return isFinite(a) ? { x: a, y: b, w: c - a, h: d - b } : null;
+  };
+  const pgTranslate = (st: PageStroke, dx: number, dy: number): PageStroke => ({
+    ...st, segs: st.segs.map((s) => ({ from: { x: s.from.x + dx, y: s.from.y + dy }, to: { x: s.to.x + dx, y: s.to.y + dy }, width: s.width })),
+  });
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -156,6 +215,16 @@ const PdfPage: React.FC<PdfPageProps> = ({
     }
   }, [dimensions, strokes]);
 
+  // 선택 모드를 끄면 선택·프리뷰·올가미 정리
+  useEffect(() => {
+    if (!selectMode) {
+      selPreviewRef.current = null; selDragRef.current = null; selLassoRef.current = null;
+      if (selectionRef.current) { selectionRef.current = null; setSelection(null); }
+      redrawStrokes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectMode]);
+
   // 비율좌표(0~1) → 내부 픽셀 InkSegment 환산 후 공용 엔진으로 렌더.
   // seg.width는 이미 내부 해상도 px로 저장돼 있다(draw에서 CSS 축소 보정).
   const paintSeg = (ctx: CanvasRenderingContext2D, stroke: PageStroke, seg: PageInkSeg) => {
@@ -177,12 +246,14 @@ const PdfPage: React.FC<PdfPageProps> = ({
       if (!ctx || !dCanvas || dimensions.width === 0) return;
       const W = dimensions.width, H = dimensions.height;
       ctx.clearRect(0, 0, dCanvas.width, dCanvas.height);
-      strokes.forEach(stroke => {
+      const pv = selPreviewRef.current, selSet = pv && selectionRef.current ? new Set(selectionRef.current.strokes) : null;
+      strokesRef.current.forEach(stroke => {
          if (!stroke || !stroke.segs || stroke.segs.length === 0) return;
-         // 비율좌표(0~1) → 픽셀 변환 후 공용 스무딩 렌더(각짐 제거). 빈 노트와 동일.
+         // 이동 중인 선택 획은 변형본으로 미리보기(저장 데이터 불변)
+         const st = (selSet && pv && selSet.has(stroke)) ? pgTranslate(stroke, pv.dx, pv.dy) : stroke;
          renderStrokeSmoothed(ctx, {
-           penType: stroke.penType, color: stroke.color, opacity: stroke.opacity,
-           segs: stroke.segs.map(s => ({ from: { x: s.from.x * W, y: s.from.y * H }, to: { x: s.to.x * W, y: s.to.y * H }, width: s.width })),
+           penType: st.penType, color: st.color, opacity: st.opacity,
+           segs: st.segs.map(s => ({ from: { x: s.from.x * W, y: s.from.y * H }, to: { x: s.to.x * W, y: s.to.y * H }, width: s.width })),
          });
       });
   };
@@ -219,10 +290,67 @@ const PdfPage: React.FC<PdfPageProps> = ({
     ctx.stroke(); ctx.restore();
   };
 
+  // ===== 올가미 포인터 =====
+  const drawLassoPdf = () => {
+    const dCanvas = drawingCanvasRef.current; const ctx = dCanvas?.getContext('2d');
+    const pts = selLassoRef.current;
+    if (!ctx || !dCanvas || !pts || pts.length < 2 || !dimensions.width) return;
+    const W = dimensions.width, H = dimensions.height;
+    const sf = dCanvas.width / (dCanvas.getBoundingClientRect().width || dCanvas.width);
+    redrawStrokes();
+    ctx.save(); ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5 * sf; ctx.setLineDash([6 * sf, 4 * sf]);
+    ctx.beginPath(); ctx.moveTo(pts[0].x * W, pts[0].y * H);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * W, pts[i].y * H);
+    ctx.stroke(); ctx.restore();
+  };
+  const selectDown = (pt: InkPoint) => {
+    const sel = selectionRef.current;
+    if (sel && pt.x >= sel.box.x && pt.x <= sel.box.x + sel.box.w && pt.y >= sel.box.y && pt.y <= sel.box.y + sel.box.h) {
+      selDragRef.current = { mode: 'move', start: pt, baseBox: { ...sel.box } }; return;
+    }
+    selDragRef.current = { mode: 'lasso' }; selLassoRef.current = [pt]; applySel(null);
+  };
+  const selectMove = (pt: InkPoint) => {
+    const d = selDragRef.current; if (!d) return;
+    if (d.mode === 'lasso') { selLassoRef.current?.push(pt); drawLassoPdf(); return; }
+    const dx = pt.x - d.start.x, dy = pt.y - d.start.y;
+    selPreviewRef.current = { dx, dy }; redrawStrokes();
+    setSelection((s) => s ? { ...s, box: { x: d.baseBox.x + dx, y: d.baseBox.y + dy, w: d.baseBox.w, h: d.baseBox.h } } : s);
+  };
+  const selectUp = () => {
+    const d = selDragRef.current; selDragRef.current = null; if (!d) return;
+    if (d.mode === 'lasso') {
+      const poly = selLassoRef.current ?? []; selLassoRef.current = null;
+      if (poly.length < 3) { redrawStrokes(); return; }
+      const picked = strokesRef.current.filter((st) => { const pts = pgPoints(st); if (!pts.length) return false; let ins = 0; for (const p of pts) if (pointInPolygon(p, poly)) ins++; return ins >= pts.length / 2; });
+      const box = picked.length ? pgBox(picked) : null;
+      applySel(box ? { strokes: picked, box } : null); redrawStrokes(); return;
+    }
+    const pv = selPreviewRef.current; selPreviewRef.current = null;
+    const sel = selectionRef.current;
+    if (!pv || !sel) { redrawStrokes(); return; }
+    const m = new Map<PageStroke, PageStroke>();
+    sel.strokes.forEach((st) => m.set(st, pgTranslate(st, pv.dx, pv.dy)));
+    commit(strokesRef.current.map((st) => m.get(st) ?? st));
+    const moved = [...m.values()], box = pgBox(moved);
+    applySel(box ? { strokes: moved, box } : null);
+  };
+  const deleteSel = () => { const sel = selectionRef.current; if (!sel) return; const set = new Set(sel.strokes); commit(strokesRef.current.filter((st) => !set.has(st))); applySel(null); };
+  const duplicateSel = () => { const sel = selectionRef.current; if (!sel) return; const copies = sel.strokes.map((st) => pgTranslate(st, 0.03, 0.03)); commit([...strokesRef.current, ...copies]); const box = pgBox(copies); applySel(box ? { strokes: copies, box } : null); };
+  const recolorSel = (color: string) => {
+    const sel = selectionRef.current; if (!sel) return;
+    const m = new Map<PageStroke, PageStroke>();
+    sel.strokes.forEach((st) => m.set(st, { ...st, color, segs: st.segs.map((s) => ({ from: { ...s.from }, to: { ...s.to }, width: s.width })) }));
+    commit(strokesRef.current.map((st) => m.get(st) ?? st));
+    const news = [...m.values()], box = pgBox(news);
+    applySel(box ? { strokes: news, box } : null);
+  };
+
   const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
-    isDrawingRef.current = true;
     const ratio = getCoordinatesRatio(e);
+    if (selectMode) { selectDown(ratio); return; }
+    isDrawingRef.current = true;
     if (isGestureMode()) { gestureRef.current = [ratio]; return; }
     lastRatioRef.current = ratio;
     currentStrokeRef.current = {
@@ -234,6 +362,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (selectMode) { if (selDragRef.current) selectMove(getCoordinatesRatio(e)); return; }
     if (!isDrawingRef.current) return;
     if (gestureRef.current) { gestureRef.current.push(getCoordinatesRatio(e)); drawGesturePreviewPdf(); return; }
     if (!currentStrokeRef.current) return;
@@ -258,6 +387,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
 
   const stopDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    if (selectMode) { selectUp(); return; }
     // #4 자/도형 제스처 확정
     if (gestureRef.current) {
       const pts = gestureRef.current; gestureRef.current = null; isDrawingRef.current = false;
@@ -277,23 +407,18 @@ const PdfPage: React.FC<PdfPageProps> = ({
       const segs: PageInkSeg[] = [];
       for (let i = 1; i < ratioPts.length; i++) segs.push({ from: ratioPts[i - 1], to: ratioPts[i], width });
       const stroke: PageStroke = { penType: pen.type, color: pen.color, opacity: pen.opacity, segs };
-      const next = [...strokesRef.current, stroke];
-      strokesRef.current = next; setStrokes(next); onStrokesChange?.(pageNumber, next);
+      commit([...strokesRef.current, stroke]);
       return;
     }
     // 스트로크를 지역변수로 먼저 캡처. (업데이터 안에서 ref를 읽으면 아래 null 대입 후
     //  실행돼 null이 저장되는 버그가 있어 redrawStrokes가 복원하지 못했음)
     const finishedStroke = currentStrokeRef.current;
     if (isDrawingRef.current && finishedStroke && finishedStroke.segs.length > 0) {
-        const next = [...strokesRef.current, finishedStroke];
-        strokesRef.current = next;
-        setStrokes(next);
-        onStrokesChange?.(pageNumber, next); // 저장 트리거 (부모가 디바운스 저장)
+        commit([...strokesRef.current, finishedStroke]); // undo 기록 + 저장 트리거
     }
     currentStrokeRef.current = null;
     lastRatioRef.current = null;
     isDrawingRef.current = false;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
   };
 
   return (
@@ -325,8 +450,25 @@ const PdfPage: React.FC<PdfPageProps> = ({
         onPointerUp={stopDraw}
         onPointerLeave={stopDraw}
         className="absolute inset-0 w-full h-full z-20 touch-none"
-        style={{ cursor: cursorForPen(pen) }}
+        style={{ cursor: selectMode ? 'crosshair' : cursorForPen(pen) }}
       />
+
+      {/* 올가미 선택 오버레이 (비율 → %) */}
+      {selectMode && selection && (
+        <div className="absolute inset-0 z-30 pointer-events-none">
+          <div className="absolute border-2 border-blue-500 border-dashed rounded-sm"
+            style={{ left: `${selection.box.x * 100}%`, top: `${selection.box.y * 100}%`, width: `${selection.box.w * 100}%`, height: `${selection.box.h * 100}%` }} />
+          <div className="absolute flex items-center gap-1 bg-white rounded-lg shadow-lg border border-slate-200 px-1.5 py-1 pointer-events-auto"
+            style={{ left: `${selection.box.x * 100}%`, top: `calc(${selection.box.y * 100}% - 42px)` }}>
+            <button onClick={duplicateSel} title="복제" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"><Copy className="w-4 h-4" /></button>
+            <button onClick={deleteSel} title="삭제" className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500"><Trash2 className="w-4 h-4" /></button>
+            <div className="w-px h-5 bg-slate-200 mx-0.5" />
+            {['#334155', '#ef4444', '#3b82f6', '#10b981', '#f59e0b'].map((c) => (
+              <button key={c} onClick={() => recolorSel(c)} title="색 변경" className="w-5 h-5 rounded-full border border-slate-200 hover:scale-110 transition-transform" style={{ backgroundColor: c }} />
+            ))}
+          </div>
+        </div>
+      )}
       
       {hasText === false && searchText && (
         <div className="absolute top-2 left-2 right-2 bg-slate-800/80 text-white text-xs px-3 py-2 rounded-lg text-center backdrop-blur-sm z-30">
@@ -346,8 +488,6 @@ export const PdfAdvancedRenderer = ({
   fileName,
   initialPageStrokes,
   onStrokesChange,
-  straightLine = false,
-  shapeMode = false,
 }: {
   fileUrl: string | null;
   pen: PenModel;
@@ -357,11 +497,23 @@ export const PdfAdvancedRenderer = ({
   fileName: string;
   initialPageStrokes?: PdfPageStrokes; // 저장된 페이지별 필기 복원용
   onStrokesChange?: (pages: PdfPageStrokes) => void; // 전체 페이지 필기 변경 알림(저장용)
-  straightLine?: boolean; // #4 자(직선)
-  shapeMode?: boolean;    // #4 도형 보정
 }) => {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
+  // PDF 자체 도구 상태(캔버스 노트 툴바가 PDF엔 안 보이므로 여기서 관리)
+  const [selectMode, setSelectMode] = useState(false);
+  const [straightLine, setStraightLine] = useState(false);
+  const [shapeMode, setShapeMode] = useState(false);
+  const pickTool = (tool: 'pen' | 'select' | 'straight' | 'shape') => {
+    setSelectMode(tool === 'select'); setStraightLine(tool === 'straight'); setShapeMode(tool === 'shape');
+  };
+  // 페이지별 undo/redo 핸들 + 현재 페이지 히스토리 상태
+  const pageHandlesRef = useRef<Map<number, { undo: () => void; redo: () => void }>>(new Map());
+  const [pageHist, setPageHist] = useState<Record<number, { canUndo: boolean; canRedo: boolean }>>({});
+  const registerPageHandle = (page: number, h: { undo: () => void; redo: () => void } | null) => {
+    if (h) pageHandlesRef.current.set(page, h); else pageHandlesRef.current.delete(page);
+  };
+  const onPageHistory = (page: number, s: { canUndo: boolean; canRedo: boolean }) => setPageHist((prev) => ({ ...prev, [page]: s }));
   // 고정 렌더 해상도. 표시 크기는 CSS(w-full + aspect-ratio)가 컨테이너 너비에 맞춰 축소한다.
   const [scale] = useState(2);
   
@@ -494,14 +646,26 @@ export const PdfAdvancedRenderer = ({
          </div>
       </div>
 
-      {/* 공용 펜 툴바 (빈 노트·슬라이드와 동일한 5종·필압·색/굵기 팝오버) */}
-      <div className="absolute top-[4.5rem] left-4 z-40 bg-white rounded-xl border border-slate-200 shadow-lg px-3 py-2">
+      {/* 공용 펜 툴바 + 도구(빈 노트와 동일: 5종 펜 · undo/redo · 올가미 · 자 · 도형) */}
+      <div className="absolute top-[4.5rem] left-4 z-40 bg-white rounded-xl border border-slate-200 shadow-lg px-3 py-2 flex items-center gap-1.5">
+         <button onClick={() => pageHandlesRef.current.get(currentPageNum)?.undo()} disabled={!pageHist[currentPageNum]?.canUndo} title="실행취소"
+           className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Undo2 className="w-5 h-5" /></button>
+         <button onClick={() => pageHandlesRef.current.get(currentPageNum)?.redo()} disabled={!pageHist[currentPageNum]?.canRedo} title="다시실행"
+           className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Redo2 className="w-5 h-5" /></button>
+         <div className="w-px h-6 bg-slate-200 mx-0.5" />
          <PenToolbar
            activeType={activeType}
            activePen={pen}
-           setActiveType={setActiveType}
+           setActiveType={(t) => { pickTool('pen'); setActiveType(t); }}
            updateActivePen={updateActivePen}
          />
+         <div className="w-px h-6 bg-slate-200 mx-0.5" />
+         <button onClick={() => pickTool(selectMode ? 'pen' : 'select')} title="올가미 선택"
+           className={cn("p-2 rounded-lg transition-colors", selectMode ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}><Lasso className="w-5 h-5" /></button>
+         <button onClick={() => pickTool(straightLine ? 'pen' : 'straight')} title="자 (반듯한 직선)"
+           className={cn("p-2 rounded-lg transition-colors", straightLine ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}><Ruler className="w-5 h-5" /></button>
+         <button onClick={() => pickTool(shapeMode ? 'pen' : 'shape')} title="도형 보정"
+           className={cn("p-2 rounded-lg transition-colors", shapeMode ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}><Shapes className="w-5 h-5" /></button>
       </div>
 
       {/* Scrollable Document Area */}
@@ -522,6 +686,9 @@ export const PdfAdvancedRenderer = ({
                onStrokesChange={handlePageStrokesChange}
                straightLine={straightLine}
                shapeMode={shapeMode}
+               selectMode={selectMode}
+               registerHandle={registerPageHandle}
+               onHistoryChange={onPageHistory}
              />
          ))}
       </div>
