@@ -56,7 +56,9 @@ export function useTranscription() {
       console.error('전사 실패', e);
     } finally {
       busyRef.current = false;
-      setStatus('listening');
+      // 녹음 진행 중(interval 살아있음)이면 청취로 복귀, 종료됐으면 대기로.
+      // (stop 시 마지막 flush가 비동기로 끝나며 idle을 덮어써 '청취 중'이 남던 버그 수정)
+      setStatus(intervalRef.current ? 'listening' : 'idle');
     }
   }, []);
 
