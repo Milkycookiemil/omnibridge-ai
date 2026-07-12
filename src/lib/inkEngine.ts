@@ -55,6 +55,7 @@ export interface InkStroke {
   color: string;
   opacity: number;
   segs: { from: { x: number; y: number }; to: { x: number; y: number }; width: number }[];
+  t?: number; // 녹음 중 그렸다면 녹음 시작부터의 경과 초(획↔전사 싱크용)
 }
 
 // #4 자(직선): 끝점을 45° 배수에 가까우면 스냅한다(반듯한 선·수직·수평·대각).

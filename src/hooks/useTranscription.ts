@@ -5,6 +5,7 @@ import { getTranscriber, resampleTo16k, transcribePcm16k, type ModelProgress } f
 
 export interface TranscriptLine {
   time: string; // mm:ss
+  sec: number;  // 녹음 시작부터 경과 초(획↔전사 싱크용)
   text: string;
 }
 
@@ -50,7 +51,7 @@ export function useTranscription() {
     try {
       const pcm16k = resampleTo16k(merged, ctx.sampleRate);
       const text = await transcribePcm16k(pcm16k);
-      if (text) setLines((prev) => [...prev, { time: fmt(elapsed), text }]);
+      if (text) setLines((prev) => [...prev, { time: fmt(elapsed), sec: elapsed, text }]);
     } catch (e) {
       console.error('전사 실패', e);
     } finally {

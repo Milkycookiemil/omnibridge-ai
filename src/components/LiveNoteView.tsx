@@ -198,6 +198,13 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   linesRef.current = transcription.lines;
   const recordingTimeRef = useRef(recordingTime);
   recordingTimeRef.current = recordingTime;
+  const isRecordingRef = useRef(isRecording);
+  isRecordingRef.current = isRecording;
+  // 전사 라인 클릭 → 그 시각 근처에 그린 획을 하이라이트("이 설명 = 이 필기")
+  const handleTranscriptLineClick = (line: { sec: number }) => {
+    const n = inkRef.current?.highlightByTime(line.sec, 6) ?? 0;
+    showToastMsg(n > 0 ? `이 시점에 그린 필기 ${n}획을 표시했어요` : '이 시점에 그린 필기가 없어요');
+  };
 
   // 실시간 AI 요약 (BYOK). 녹음 중이고 키가 설정돼 있으면 전사 텍스트를 주기적으로 Claude로
   // 요약해 카드로 표시. 키가 없으면 안내 카드, 실패 시 오류 카드.
@@ -447,6 +454,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       selectMode={selectMode}
       straightLine={straightLine}
       shapeMode={shapeMode}
+      strokeTime={() => (isRecordingRef.current ? recordingTimeRef.current : undefined)}
       onHistoryChange={({ canUndo, canRedo }) => { setCanUndo(canUndo); setCanRedo(canRedo); }}
       backgroundStyle={backgroundStyle}
       onDelta={handleLocalDelta}
@@ -556,6 +564,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
         modelProgress={transcription.modelProgress}
         open={transcriptOpen}
         onToggle={() => setTranscriptOpen(!transcriptOpen)}
+        onLineClick={handleTranscriptLineClick}
         summarySlot={summaryContent}
       />
 

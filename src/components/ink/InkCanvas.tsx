@@ -31,6 +31,7 @@ export interface InkCanvasHandle {
   loadStrokes: (strokes: InkStroke[]) => void; // 저장된 노트 불러오기
   undo: () => void;                      // #3 실행취소
   redo: () => void;                      // #3 다시실행
+  highlightByTime: (sec: number, windowSec?: number) => number; // P1 전사→획 하이라이트(맞은 획 수 반환)
 }
 
 interface InkCanvasProps {
@@ -46,6 +47,7 @@ interface InkCanvasProps {
   straightLine?: boolean;                // #4 자: 직선 모드
   shapeMode?: boolean;                   // #4 도형 보정 모드
   onHistoryChange?: (s: { canUndo: boolean; canRedo: boolean }) => void; // #3 버튼 활성화용
+  strokeTime?: () => number | undefined; // P1 녹음 중이면 획에 찍을 경과 초, 아니면 undefined
 }
 
 type SelBox = { x: number; y: number; w: number; h: number };
@@ -56,7 +58,7 @@ type DragState =
   | { mode: 'scale'; anchor: { x: number; y: number }; baseBox: SelBox };
 
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
-  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange },
+  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -85,6 +87,10 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   const [dispScale, setDispScale] = useState(1);
   // 고정 비율 페이지 크기·컨테이너 내 오프셋(px) — 균일 축소 + 오버레이 좌표 변환용.
   const [page, setPage] = useState({ w: 0, h: 0, offX: 0, offY: 0 });
+
+  // P1 전사→획 하이라이트 박스(잠깐 반짝이고 사라짐)
+  const [highlightBox, setHighlightBox] = useState<SelBox | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- 올가미 선택 상태 ---
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -272,6 +278,18 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     applyDelta,
     undo,
     redo,
+    // P1: 주어진 시각(초) 근처에 그린 획들의 영역을 잠깐 하이라이트. 맞은 획 수 반환.
+    highlightByTime: (sec: number, windowSec = 6) => {
+      const matches = [...strokesRef.current.values()].filter((st) => st.t !== undefined && Math.abs((st.t as number) - sec) <= windowSec);
+      if (!matches.length) { setHighlightBox(null); return 0; }
+      const box = boxOfStrokes(matches);
+      if (box) {
+        setHighlightBox(box);
+        if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = setTimeout(() => setHighlightBox(null), 1800);
+      }
+      return matches.length;
+    },
     clear: () => {
       strokesRef.current.clear();
       layerCanvasesRef.current.forEach((c) => c.getContext('2d')?.clearRect(0, 0, c.width, c.height));
@@ -495,6 +513,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     return { id: genId(), layerId: activeLayerRef.current, penType: pen.type, color: pen.color, opacity: pen.opacity, segs };
   };
   const commitGestureStroke = (stroke: InkStroke) => {
+    const t = strokeTime?.(); if (t !== undefined) stroke.t = t;
     strokesRef.current.set(stroke.id, stroke);
     rebuildLayer(stroke.layerId); composite();
     for (const s of stroke.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: stroke.penType, color: stroke.color, opacity: stroke.opacity, strokeId: stroke.id, layerId: stroke.layerId });
@@ -593,7 +612,10 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     lastRef.current = null;
     currentStrokeIdRef.current = null;
     if (finishedLayer) { rebuildLayer(finishedLayer); composite(); }
-    if (finishedId) { const st = strokesRef.current.get(finishedId); if (st) pushUndo({ removed: [], added: [deepStroke(st)] }); }
+    if (finishedId) {
+      const st = strokesRef.current.get(finishedId);
+      if (st) { const t = strokeTime?.(); if (t !== undefined) st.t = t; pushUndo({ removed: [], added: [deepStroke(st)] }); }
+    }
   };
 
   return (
@@ -626,6 +648,14 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
           className="absolute inset-0 w-full h-full touch-none z-10"
           style={{ cursor: selectMode ? 'crosshair' : cursorForPen(pen, dispScale) }}
         />
+
+        {/* P1: 전사 라인 클릭 시 그 시각에 그린 획 영역을 잠깐 하이라이트 */}
+        {highlightBox && (
+          <div
+            className="absolute rounded-lg border-2 border-amber-400 bg-amber-300/20 pointer-events-none animate-pulse z-[14]"
+            style={{ left: (highlightBox.x - 8) * dispScale, top: (highlightBox.y - 8) * dispScale, width: (highlightBox.w + 16) * dispScale, height: (highlightBox.h + 16) * dispScale }}
+          />
+        )}
 
         {/* 올가미 선택 오버레이 (페이지 박스 내부, 표시 좌표 = 논리좌표 × dispScale) */}
         {selectMode && selection && (

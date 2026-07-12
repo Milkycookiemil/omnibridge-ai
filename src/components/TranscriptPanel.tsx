@@ -14,11 +14,12 @@ interface TranscriptPanelProps {
   open: boolean;
   onToggle: () => void;
   summarySlot?: React.ReactNode; // 오른쪽 요약 컬럼 내용
+  onLineClick?: (line: TranscriptLine) => void; // P1: 라인 클릭 → 그 시각의 필기 하이라이트
 }
 
 const PANEL_H = 248; // px
 
-export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, summarySlot }: TranscriptPanelProps) {
+export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, summarySlot, onLineClick }: TranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -84,10 +85,15 @@ export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, 
                   </div>
                 ) : (
                   lines.map((l, i) => (
-                    <div key={i} className="flex gap-3 text-sm">
-                      <span className="font-mono text-xs text-blue-500 font-bold shrink-0 mt-0.5">{l.time}</span>
+                    <button
+                      key={i}
+                      onClick={() => onLineClick?.(l)}
+                      className="w-full flex gap-3 text-sm text-left rounded-lg -mx-2 px-2 py-1 hover:bg-blue-50 transition-colors group"
+                      title="이 시점에 그린 필기 보기"
+                    >
+                      <span className="font-mono text-xs text-blue-500 font-bold shrink-0 mt-0.5 group-hover:underline">{l.time}</span>
                       <span className="text-slate-700 leading-relaxed">{l.text}</span>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
