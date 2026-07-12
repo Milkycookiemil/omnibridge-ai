@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes } from 'lucide-react';
@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, cursorForPen,
-  snapLineEnd, recognizeShape, shapeToPoints, pointInPolygon,
+  snapLineEnd, recognizeShape, shapeToPoints, pointInPolygon, distancePointToSegment,
   type InkSegment, type PenModel, type PenType,
 } from '../../lib/inkEngine';
 // 페이지별 비율좌표(0~1) 저장 구조 — 노트 영속화를 위해 공용 모듈에서 가져온다.
@@ -30,15 +30,17 @@ interface PdfPageProps {
   straightLine?: boolean; // #4 자(직선)
   shapeMode?: boolean;    // #4 도형 보정
   selectMode?: boolean;   // 올가미 선택 모드
-  registerHandle?: (page: number, h: { undo: () => void; redo: () => void } | null) => void; // 페이지 undo/redo 등록
+  registerHandle?: (page: number, h: { undo: () => void; redo: () => void; highlightByTime: (sec: number, win: number) => number } | null) => void;
   onHistoryChange?: (page: number, s: { canUndo: boolean; canRedo: boolean }) => void;
+  strokeTime?: () => number | undefined;   // P1 녹음 중이면 획에 찍을 경과 초
+  onStrokeTap?: (t: number) => void;       // P1 역방향: 시각 있는 획 탭 → 전사 점프
 }
 
 const PdfPage: React.FC<PdfPageProps> = ({
   pageNumber, pdfDocument, pen, scale, searchText,
   highlightedIndexes, currentMatchIndex, onPageMatchCalculated, onVisible,
   initialStrokes, onStrokesChange, straightLine = false, shapeMode = false,
-  selectMode = false, registerHandle, onHistoryChange,
+  selectMode = false, registerHandle, onHistoryChange, strokeTime, onStrokeTap,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -88,8 +90,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
   // 최신 클로저를 참조하는 안정 핸들 등록.
   const undoFnRef = useRef(undo); undoFnRef.current = undo;
   const redoFnRef = useRef(redo); redoFnRef.current = redo;
+  const hlFnRef = useRef<(s: number, w: number) => number>(() => 0);
   useEffect(() => {
-    registerHandle?.(pageNumber, { undo: () => undoFnRef.current(), redo: () => redoFnRef.current() });
+    registerHandle?.(pageNumber, { undo: () => undoFnRef.current(), redo: () => redoFnRef.current(), highlightByTime: (s, w) => hlFnRef.current(s, w) });
     return () => registerHandle?.(pageNumber, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageNumber]);
@@ -112,6 +115,22 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const pgTranslate = (st: PageStroke, dx: number, dy: number): PageStroke => ({
     ...st, segs: st.segs.map((s) => ({ from: { x: s.from.x + dx, y: s.from.y + dy }, to: { x: s.to.x + dx, y: s.to.y + dy }, width: s.width })),
   });
+
+  // P1: 전사→획 하이라이트(이 페이지에서 sec 근처에 그린 획 영역 반짝). 맞은 획 수 반환.
+  const [pdfHighlight, setPdfHighlight] = useState<PBox | null>(null);
+  const pdfHlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightByTime = (sec: number, win: number): number => {
+    const m = strokesRef.current.filter((st) => st.t !== undefined && Math.abs((st.t as number) - sec) <= win);
+    if (!m.length) return 0;
+    const box = pgBox(m);
+    if (box) {
+      setPdfHighlight(box);
+      if (pdfHlTimerRef.current) clearTimeout(pdfHlTimerRef.current);
+      pdfHlTimerRef.current = setTimeout(() => setPdfHighlight(null), 1800);
+    }
+    return m.length;
+  };
+  hlFnRef.current = highlightByTime;
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -321,7 +340,20 @@ const PdfPage: React.FC<PdfPageProps> = ({
     const d = selDragRef.current; selDragRef.current = null; if (!d) return;
     if (d.mode === 'lasso') {
       const poly = selLassoRef.current ?? []; selLassoRef.current = null;
-      if (poly.length < 3) { redrawStrokes(); return; }
+      if (poly.length < 3) {
+        // 탭: 시각(t) 있는 획을 짚으면 전사로 점프
+        const tap = poly[0];
+        if (tap && onStrokeTap) {
+          const W = dimensions.width || 1, thr = 14 / W;
+          let hitT: number | undefined;
+          for (const st of strokesRef.current) {
+            if (st.t === undefined || st.penType === 'eraser') continue;
+            if (st.segs.some((s) => distancePointToSegment(tap, s.from, s.to) <= thr + (s.width / 2) / W)) hitT = st.t;
+          }
+          if (hitT !== undefined) onStrokeTap(hitT);
+        }
+        redrawStrokes(); return;
+      }
       const picked = strokesRef.current.filter((st) => { const pts = pgPoints(st); if (!pts.length) return false; let ins = 0; for (const p of pts) if (pointInPolygon(p, poly)) ins++; return ins >= pts.length / 2; });
       const box = picked.length ? pgBox(picked) : null;
       applySel(box ? { strokes: picked, box } : null); redrawStrokes(); return;
@@ -407,6 +439,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
       const segs: PageInkSeg[] = [];
       for (let i = 1; i < ratioPts.length; i++) segs.push({ from: ratioPts[i - 1], to: ratioPts[i], width });
       const stroke: PageStroke = { penType: pen.type, color: pen.color, opacity: pen.opacity, segs };
+      const gt = strokeTime?.(); if (gt !== undefined) stroke.t = gt;
       commit([...strokesRef.current, stroke]);
       return;
     }
@@ -414,6 +447,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
     //  실행돼 null이 저장되는 버그가 있어 redrawStrokes가 복원하지 못했음)
     const finishedStroke = currentStrokeRef.current;
     if (isDrawingRef.current && finishedStroke && finishedStroke.segs.length > 0) {
+        const ft = strokeTime?.(); if (ft !== undefined) finishedStroke.t = ft;
         commit([...strokesRef.current, finishedStroke]); // undo 기록 + 저장 트리거
     }
     currentStrokeRef.current = null;
@@ -469,6 +503,12 @@ const PdfPage: React.FC<PdfPageProps> = ({
           </div>
         </div>
       )}
+
+      {/* P1: 전사 라인 클릭 시 그 시각에 그린 획 하이라이트 */}
+      {pdfHighlight && (
+        <div className="absolute z-30 rounded-lg border-2 border-amber-400 bg-amber-300/20 pointer-events-none animate-pulse"
+          style={{ left: `${pdfHighlight.x * 100}%`, top: `${pdfHighlight.y * 100}%`, width: `${pdfHighlight.w * 100}%`, height: `${pdfHighlight.h * 100}%` }} />
+      )}
       
       {hasText === false && searchText && (
         <div className="absolute top-2 left-2 right-2 bg-slate-800/80 text-white text-xs px-3 py-2 rounded-lg text-center backdrop-blur-sm z-30">
@@ -479,16 +519,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
   );
 };
 
-export const PdfAdvancedRenderer = ({
-  fileUrl,
-  pen,
-  activeType,
-  setActiveType,
-  updateActivePen,
-  fileName,
-  initialPageStrokes,
-  onStrokesChange,
-}: {
+export interface PdfRendererHandle { highlightByTime: (sec: number, win?: number) => number; }
+
+export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   fileUrl: string | null;
   pen: PenModel;
   activeType: PenType;
@@ -497,7 +530,20 @@ export const PdfAdvancedRenderer = ({
   fileName: string;
   initialPageStrokes?: PdfPageStrokes; // 저장된 페이지별 필기 복원용
   onStrokesChange?: (pages: PdfPageStrokes) => void; // 전체 페이지 필기 변경 알림(저장용)
-}) => {
+  strokeTime?: () => number | undefined; // P1 녹음 시각 스탬프
+  onStrokeTap?: (t: number) => void;     // P1 역방향: 획 탭 → 전사 점프
+}>(({
+  fileUrl,
+  pen,
+  activeType,
+  setActiveType,
+  updateActivePen,
+  fileName,
+  initialPageStrokes,
+  onStrokesChange,
+  strokeTime,
+  onStrokeTap,
+}, ref) => {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   // PDF 자체 도구 상태(캔버스 노트 툴바가 PDF엔 안 보이므로 여기서 관리)
@@ -508,9 +554,9 @@ export const PdfAdvancedRenderer = ({
     setSelectMode(tool === 'select'); setStraightLine(tool === 'straight'); setShapeMode(tool === 'shape');
   };
   // 페이지별 undo/redo 핸들 + 현재 페이지 히스토리 상태
-  const pageHandlesRef = useRef<Map<number, { undo: () => void; redo: () => void }>>(new Map());
+  const pageHandlesRef = useRef<Map<number, { undo: () => void; redo: () => void; highlightByTime: (sec: number, win: number) => number }>>(new Map());
   const [pageHist, setPageHist] = useState<Record<number, { canUndo: boolean; canRedo: boolean }>>({});
-  const registerPageHandle = (page: number, h: { undo: () => void; redo: () => void } | null) => {
+  const registerPageHandle = (page: number, h: { undo: () => void; redo: () => void; highlightByTime: (sec: number, win: number) => number } | null) => {
     if (h) pageHandlesRef.current.set(page, h); else pageHandlesRef.current.delete(page);
   };
   const onPageHistory = (page: number, s: { canUndo: boolean; canRedo: boolean }) => setPageHist((prev) => ({ ...prev, [page]: s }));
@@ -543,6 +589,19 @@ export const PdfAdvancedRenderer = ({
     const pages = containerRef.current?.querySelectorAll('.pdf-page');
     pages?.[clamped - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+
+  // P1: 전사 라인 클릭 → 모든 페이지에서 그 시각의 획 하이라이트 + 첫 매칭 페이지로 스크롤.
+  useImperativeHandle(ref, () => ({
+    highlightByTime: (sec: number, win = 6) => {
+      let total = 0, firstPage = -1;
+      for (const [page, h] of pageHandlesRef.current) {
+        const c = h.highlightByTime(sec, win);
+        if (c > 0) { total += c; if (firstPage < 0 || page < firstPage) firstPage = page; }
+      }
+      if (firstPage > 0) scrollToPage(firstPage);
+      return total;
+    },
+  }));
 
   // 페이지별 필기를 모아 두었다가 변경 시 상위(LiveNoteView)로 통지 → 노트에 저장.
   const pagesRef = useRef<PdfPageStrokes>(initialPageStrokes ?? {});
@@ -689,9 +748,11 @@ export const PdfAdvancedRenderer = ({
                selectMode={selectMode}
                registerHandle={registerPageHandle}
                onHistoryChange={onPageHistory}
+               strokeTime={strokeTime}
+               onStrokeTap={onStrokeTap}
              />
          ))}
       </div>
     </div>
   );
-};
+});

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { uploadToGoogleDrive } from '../lib/drive';
 import { getAccessToken } from '../lib/auth';
-import { PdfAdvancedRenderer } from './pdf/PdfAdvancedRenderer';
+import { PdfAdvancedRenderer, type PdfRendererHandle } from './pdf/PdfAdvancedRenderer';
 import { LectureCapture } from './pdf/LectureCapture';
 import { InkCanvas, type InkCanvasHandle } from './ink/InkCanvas';
 import { PenToolbar } from './ink/PenToolbar';
@@ -176,6 +176,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   // 펜 상태(5종 + 활성 펜) & 캔버스 핸들
   const { activeType, activePen, setActiveType, updateActivePen } = usePenState('pen');
   const inkRef = useRef<InkCanvasHandle>(null);
+  const pdfRef = useRef<PdfRendererHandle>(null);
 
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -202,7 +203,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   isRecordingRef.current = isRecording;
   // 전사 라인 클릭 → 그 시각 근처에 그린 획을 하이라이트("이 설명 = 이 필기")
   const handleTranscriptLineClick = (line: { sec: number }) => {
-    const n = inkRef.current?.highlightByTime(line.sec, 6) ?? 0;
+    const n = inkRef.current?.highlightByTime(line.sec, 6) ?? pdfRef.current?.highlightByTime(line.sec, 6) ?? 0;
     showToastMsg(n > 0 ? `이 시점에 그린 필기 ${n}획을 표시했어요` : '이 시점에 그린 필기가 없어요');
   };
   // 역방향: 획 탭 → 그릴 때의 전사 라인으로 점프·하이라이트
@@ -485,12 +486,15 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
 
       {paperStyle === 'pdf' && (
         <PdfAdvancedRenderer
+           ref={pdfRef}
            fileUrl={pdfUrl}
            fileName={fileName || 'Document.pdf'}
            pen={activePen}
            activeType={activeType}
            setActiveType={setActiveType}
            updateActivePen={updateActivePen}
+           strokeTime={() => (isRecordingRef.current ? recordingTimeRef.current : undefined)}
+           onStrokeTap={handleStrokeTap}
            initialPageStrokes={pdfInitialPages}
            onStrokesChange={handlePdfStrokesChange}
         />

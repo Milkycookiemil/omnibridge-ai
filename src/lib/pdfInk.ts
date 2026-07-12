@@ -19,6 +19,7 @@ export interface PageStroke {
   color: string;
   opacity: number;
   segs: PageInkSeg[];
+  t?: number; // 녹음 중 그렸다면 녹음 시작부터의 경과 초(획↔전사 싱크용)
 }
 
 // 페이지 번호(1-base) → 그 페이지의 스트로크 목록. 노트에 이 형태로 저장한다.
