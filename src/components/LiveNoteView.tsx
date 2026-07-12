@@ -16,7 +16,7 @@ import { useTranscription } from '../hooks/useTranscription';
 
 import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
-import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteTypedText } from '../lib/notesStore';
+import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteTypedText, saveNoteTranscript } from '../lib/notesStore';
 import { downloadPdf } from '../lib/pdfStore';
 import type { PdfPageStrokes } from '../lib/pdfInk';
 import { usePreferences } from '../lib/preferences';
@@ -137,20 +137,37 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const [typedNote, setTypedNote] = useState('');
   const typedSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 저장된 타이핑 텍스트 복원 (노트 열 때)
+  // 저장된 타이핑 텍스트 + 전사 복원 (노트 열 때) — 전사 복원으로 재방문/다른 기기에서도 획↔전사 싱크 동작
   useEffect(() => {
     if (!noteId) {
       setTypedNote('');
+      transcription.restore([]);
       return;
     }
     let cancelled = false;
     getNote(noteId).then((note) => {
-      if (!cancelled) setTypedNote(note?.typedText ?? '');
+      if (cancelled) return;
+      setTypedNote(note?.typedText ?? '');
+      const saved = note?.transcript ?? [];
+      restoredTranscriptRef.current = saved; // 복원분은 재저장 안 함
+      transcription.restore(saved);
     });
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
+
+  // 전사 변경 → 디바운스 저장(복원한 그대로면 skip). 재방문/크로스디바이스 싱크의 핵심.
+  const restoredTranscriptRef = useRef<any>(null);
+  const transcriptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!noteId || transcription.lines === restoredTranscriptRef.current) return;
+    if (transcriptSaveTimer.current) clearTimeout(transcriptSaveTimer.current);
+    const snapshot = transcription.lines;
+    transcriptSaveTimer.current = setTimeout(() => void saveNoteTranscript(noteId, snapshot), 1500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transcription.lines, noteId]);
 
   // 타이핑 변경 → 디바운스 저장(손필기와 한 노트로 동기화)
   const handleTypedChange = (text: string) => {

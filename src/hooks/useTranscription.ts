@@ -114,6 +114,8 @@ export function useTranscription() {
   }, [flushWindow]);
 
   const reset = useCallback(() => setLines([]), []);
+  // 저장된 전사를 노트 열 때 복원(획↔전사 싱크가 재방문·크로스디바이스에서도 동작).
+  const restore = useCallback((saved: TranscriptLine[]) => setLines(saved ?? []), []);
 
-  return { lines, status, modelProgress, start, stop, reset };
+  return { lines, status, modelProgress, start, stop, reset, restore };
 }

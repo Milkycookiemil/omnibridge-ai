@@ -29,6 +29,8 @@ alter table public.notes add column if not exists deleted_at bigint;
 alter table public.notes add column if not exists pdf_pages  jsonb;
 -- 노트북 '타이핑 복습' 텍스트(손필기와 한 노트로 동기화).
 alter table public.notes add column if not exists typed_text text;
+-- 녹음 전사(jsonb) — 획↔전사 싱크가 노트 재방문·다른 기기에서도 동작하도록 영속화.
+alter table public.notes add column if not exists transcript jsonb;
 
 -- 행 레벨 보안 활성화 (자동 RLS가 켜져 있어도 명시적으로 이중 보장)
 alter table public.notes enable row level security;

@@ -30,6 +30,7 @@ export interface Note extends NoteMeta {
   strokes: InkStroke[]; // InkCanvas의 스트로크 모델을 그대로 보관 (pdf/capture는 비어 있음)
   pdfPages?: PdfPageStrokes; // PDF 노트: 페이지별 필기. 원본 파일은 Storage(pdfStore)에 별도 저장.
   typedText?: string; // 노트북 모드 '타이핑 복습' 텍스트. 손필기와 한 노트로 클라우드 동기화.
+  transcript?: { time: string; sec: number; text: string }[]; // 녹음 전사(획↔전사 싱크 복원용)
   // ↓ 내부 필드 (소비처는 무시). IndexedDB에만 저장, NoteMeta 반환 시 제외.
   user_id?: string | null; // 소유 계정(Supabase Auth user.id). 게스트/미로그인 = null
   _dirty?: boolean; // 클라우드 업로드 대기(오프라인/실패). 성공 시 false로 정리
@@ -108,6 +109,7 @@ interface NoteRow {
   deleted_at: number | null;
   pdf_pages: unknown;
   typed_text: string | null;
+  transcript: unknown;
 }
 
 const toRow = (n: Note, uid: string): NoteRow => ({
@@ -123,6 +125,7 @@ const toRow = (n: Note, uid: string): NoteRow => ({
   deleted_at: n.deletedAt ?? null,
   pdf_pages: n.pdfPages ?? null,
   typed_text: n.typedText ?? null,
+  transcript: n.transcript ?? null,
 });
 
 const fromRow = (r: NoteRow): Note => ({
@@ -133,6 +136,7 @@ const fromRow = (r: NoteRow): Note => ({
   strokes: (r.strokes as InkStroke[]) ?? [],
   pdfPages: (r.pdf_pages as PdfPageStrokes) ?? undefined,
   typedText: r.typed_text ?? undefined,
+  transcript: (r.transcript as Note['transcript']) ?? undefined,
   thumbnail: r.thumbnail ?? undefined,
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
@@ -357,6 +361,17 @@ export async function saveNoteTypedText(id: string, typedText: string): Promise<
   const note = await getNote(id);
   if (!note || note.typedText === typedText) return;
   note.typedText = typedText;
+  note.updatedAt = Date.now();
+  note._dirty = true;
+  await run('readwrite', (s) => s.put(note));
+  void pushNote(note);
+}
+
+// 녹음 전사 저장 → 노트 재방문·크로스디바이스에서도 획↔전사 싱크가 동작하도록 영속화.
+export async function saveNoteTranscript(id: string, transcript: Note['transcript']): Promise<void> {
+  const note = await getNote(id);
+  if (!note) return;
+  note.transcript = transcript;
   note.updatedAt = Date.now();
   note._dirty = true;
   await run('readwrite', (s) => s.put(note));
