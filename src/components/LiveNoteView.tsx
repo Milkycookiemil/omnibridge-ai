@@ -495,6 +495,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
            updateActivePen={updateActivePen}
            strokeTime={() => (isRecordingRef.current ? recordingTimeRef.current : undefined)}
            onStrokeTap={handleStrokeTap}
+           recordSlot={recordButton}
            initialPageStrokes={pdfInitialPages}
            onStrokesChange={handlePdfStrokesChange}
         />

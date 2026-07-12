@@ -14,9 +14,9 @@ import type { InkDelta, InkSegment } from './inkEngine';
 // CRDT에는 append-only로 쌓여 리플레이 시 순서대로 적용된다 (삭제 포함 상태 재현).
 export type { InkDelta, InkSegment };
 
-// 세그먼트 / 삭제 연산 판별
+// 세그먼트 / 삭제 / 시각 연산 판별
 const isInkDelta = (d: any): d is InkDelta =>
-  !!d && typeof d === 'object' && (('from' in d && 'to' in d) || d.type === 'erase_strokes');
+  !!d && typeof d === 'object' && (('from' in d && 'to' in d) || d.type === 'erase_strokes' || d.type === 'stroke_time');
 
 interface SyncState {
   isOnline: boolean;

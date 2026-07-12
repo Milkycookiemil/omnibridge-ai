@@ -38,8 +38,16 @@ export interface EraseStrokesOp {
   strokeIds: string[];
 }
 
+// 획에 녹음 시각(t)을 붙이는 연산 — 획↔전사 싱크를 기기 간에 전파(획은 세그먼트로
+// 먼저 전달되고, 이 연산이 뒤따라 t를 설정한다).
+export interface StrokeTimeOp {
+  type: 'stroke_time';
+  strokeId: string;
+  t: number;
+}
+
 // 동기화 채널·CRDT를 흐르는 잉크 이벤트의 합집합
-export type InkDelta = InkSegment | EraseStrokesOp;
+export type InkDelta = InkSegment | EraseStrokesOp | StrokeTimeOp;
 
 // 캔버스 내부 모델: 레이어(포토샵식)와 스트로크(획 단위 저장)
 export interface InkLayer {

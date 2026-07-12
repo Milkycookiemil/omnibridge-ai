@@ -198,6 +198,10 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       }
       affectedLayers.forEach(rebuildLayer);
       composite();
+    } else if (delta.type === 'stroke_time') {
+      // 원격/리플레이: 이미 존재하는 획에 녹음 시각을 설정(획↔전사 싱크 전파)
+      const st = strokesRef.current.get(delta.strokeId);
+      if (st) st.t = delta.t;
     }
   };
 
@@ -531,6 +535,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     strokesRef.current.set(stroke.id, stroke);
     rebuildLayer(stroke.layerId); composite();
     for (const s of stroke.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: stroke.penType, color: stroke.color, opacity: stroke.opacity, strokeId: stroke.id, layerId: stroke.layerId });
+    if (t !== undefined) onDelta?.({ type: 'stroke_time', strokeId: stroke.id, t }); // 원격에도 시각 전파
     pushUndo({ removed: [], added: [deepStroke(stroke)] });
   };
   const drawGesturePreview = () => {
@@ -628,7 +633,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     if (finishedLayer) { rebuildLayer(finishedLayer); composite(); }
     if (finishedId) {
       const st = strokesRef.current.get(finishedId);
-      if (st) { const t = strokeTime?.(); if (t !== undefined) st.t = t; pushUndo({ removed: [], added: [deepStroke(st)] }); }
+      if (st) {
+        const t = strokeTime?.();
+        if (t !== undefined) { st.t = t; onDelta?.({ type: 'stroke_time', strokeId: finishedId, t }); } // 원격에도 시각 전파
+        pushUndo({ removed: [], added: [deepStroke(st)] });
+      }
     }
   };
 

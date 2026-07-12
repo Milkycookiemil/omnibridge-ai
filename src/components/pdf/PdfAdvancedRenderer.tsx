@@ -532,6 +532,7 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   onStrokesChange?: (pages: PdfPageStrokes) => void; // 전체 페이지 필기 변경 알림(저장용)
   strokeTime?: () => number | undefined; // P1 녹음 시각 스탬프
   onStrokeTap?: (t: number) => void;     // P1 역방향: 획 탭 → 전사 점프
+  recordSlot?: React.ReactNode;          // PDF 헤더에 넣을 녹음 버튼
 }>(({
   fileUrl,
   pen,
@@ -543,6 +544,7 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   onStrokesChange,
   strokeTime,
   onStrokeTap,
+  recordSlot,
 }, ref) => {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -703,6 +705,7 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
                  <button onClick={handleNextMatch} className="p-1 hover:bg-white rounded transition-colors" disabled={totalMatchesCount === 0}><ChevronDown className="w-4 h-4" /></button>
              </div>
          </div>
+         {recordSlot && <div className="shrink-0">{recordSlot}</div>}
       </div>
 
       {/* 공용 펜 툴바 + 도구(빈 노트와 동일: 5종 펜 · undo/redo · 올가미 · 자 · 도형) */}
