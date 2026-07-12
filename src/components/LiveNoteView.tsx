@@ -466,8 +466,10 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
            fileName={fileName || 'Document.pdf'}
            pen={activePen}
            activeType={activeType}
-           setActiveType={setActiveType}
+           setActiveType={(t) => { pickTool('pen'); setActiveType(t); }}
            updateActivePen={updateActivePen}
+           straightLine={straightLine}
+           shapeMode={shapeMode}
            initialPageStrokes={pdfInitialPages}
            onStrokesChange={handlePdfStrokesChange}
         />

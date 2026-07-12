@@ -5,7 +5,8 @@ import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X } from 'lu
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import {
-  renderInkSegment, widthForPressure, cursorForPen,
+  renderInkSegment, renderStrokeSmoothed, widthForPressure, cursorForPen,
+  snapLineEnd, recognizeShape, shapeToPoints,
   type InkSegment, type PenModel, type PenType,
 } from '../../lib/inkEngine';
 // 페이지별 비율좌표(0~1) 저장 구조 — 노트 영속화를 위해 공용 모듈에서 가져온다.
@@ -26,12 +27,14 @@ interface PdfPageProps {
   onVisible: (pageNumber: number) => void;
   initialStrokes?: PageStroke[]; // 저장된 필기 복원용
   onStrokesChange?: (pageNumber: number, strokes: PageStroke[]) => void; // 필기 변경 알림(저장용)
+  straightLine?: boolean; // #4 자(직선)
+  shapeMode?: boolean;    // #4 도형 보정
 }
 
 const PdfPage: React.FC<PdfPageProps> = ({
   pageNumber, pdfDocument, pen, scale, searchText,
   highlightedIndexes, currentMatchIndex, onPageMatchCalculated, onVisible,
-  initialStrokes, onStrokesChange,
+  initialStrokes, onStrokesChange, straightLine = false, shapeMode = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -48,6 +51,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
   strokesRef.current = strokes;
   const currentStrokeRef = useRef<PageStroke | null>(null);
   const lastRatioRef = useRef<InkPoint | null>(null);
+  const gestureRef = useRef<InkPoint[] | null>(null); // #4 자/도형 제스처(비율좌표)
+  const isGestureMode = () => (straightLine || shapeMode) && pen.type !== 'eraser';
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -170,10 +175,15 @@ const PdfPage: React.FC<PdfPageProps> = ({
       const dCanvas = drawingCanvasRef.current;
       const ctx = dCanvas?.getContext('2d');
       if (!ctx || !dCanvas || dimensions.width === 0) return;
+      const W = dimensions.width, H = dimensions.height;
       ctx.clearRect(0, 0, dCanvas.width, dCanvas.height);
       strokes.forEach(stroke => {
          if (!stroke || !stroke.segs || stroke.segs.length === 0) return;
-         stroke.segs.forEach(seg => paintSeg(ctx, stroke, seg));
+         // 비율좌표(0~1) → 픽셀 변환 후 공용 스무딩 렌더(각짐 제거). 빈 노트와 동일.
+         renderStrokeSmoothed(ctx, {
+           penType: stroke.penType, color: stroke.color, opacity: stroke.opacity,
+           segs: stroke.segs.map(s => ({ from: { x: s.from.x * W, y: s.from.y * H }, to: { x: s.to.x * W, y: s.to.y * H }, width: s.width })),
+         });
       });
   };
 
@@ -187,10 +197,34 @@ const PdfPage: React.FC<PdfPageProps> = ({
     };
   };
 
+  // #4 제스처 미리보기(직선 스냅 / 자유곡선) — 픽셀로 그린다.
+  const drawGesturePreviewPdf = () => {
+    const dCanvas = drawingCanvasRef.current; const ctx = dCanvas?.getContext('2d');
+    const pts = gestureRef.current;
+    if (!ctx || !dCanvas || !pts || pts.length < 1 || !dimensions.width) return;
+    const W = dimensions.width, H = dimensions.height;
+    const sf = dCanvas.width / (dCanvas.getBoundingClientRect().width || dCanvas.width);
+    redrawStrokes();
+    ctx.save();
+    ctx.globalAlpha = pen.opacity; ctx.strokeStyle = pen.color; ctx.lineWidth = widthForPressure(pen, 0.5) * sf;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (straightLine) {
+      const a = pts[0], b = snapLineEnd(a, pts[pts.length - 1]);
+      ctx.moveTo(a.x * W, a.y * H); ctx.lineTo(b.x * W, b.y * H);
+    } else {
+      ctx.moveTo(pts[0].x * W, pts[0].y * H);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * W, pts[i].y * H);
+    }
+    ctx.stroke(); ctx.restore();
+  };
+
   const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
     isDrawingRef.current = true;
-    lastRatioRef.current = getCoordinatesRatio(e);
+    const ratio = getCoordinatesRatio(e);
+    if (isGestureMode()) { gestureRef.current = [ratio]; return; }
+    lastRatioRef.current = ratio;
     currentStrokeRef.current = {
       penType: pen.type,
       color: pen.color,
@@ -200,7 +234,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawingRef.current || !currentStrokeRef.current) return;
+    if (!isDrawingRef.current) return;
+    if (gestureRef.current) { gestureRef.current.push(getCoordinatesRatio(e)); drawGesturePreviewPdf(); return; }
+    if (!currentStrokeRef.current) return;
     const from = lastRatioRef.current;
     const to = getCoordinatesRatio(e);
     if (!from) { lastRatioRef.current = to; return; }
@@ -221,6 +257,30 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const stopDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    // #4 자/도형 제스처 확정
+    if (gestureRef.current) {
+      const pts = gestureRef.current; gestureRef.current = null; isDrawingRef.current = false;
+      const dCanvas = drawingCanvasRef.current;
+      if (pts.length < 2 || !dCanvas || !dimensions.width) { redrawStrokes(); return; }
+      const sf = dCanvas.width / (dCanvas.getBoundingClientRect().width || dCanvas.width);
+      const width = widthForPressure(pen, 0.5) * sf;
+      const W = dimensions.width, H = dimensions.height;
+      let ratioPts: InkPoint[];
+      if (straightLine) {
+        ratioPts = [pts[0], snapLineEnd(pts[0], pts[pts.length - 1])];
+      } else {
+        const pxPts = pts.map(p => ({ x: p.x * W, y: p.y * H }));
+        const shape = recognizeShape(pxPts);
+        ratioPts = shape ? shapeToPoints(shape).map(p => ({ x: p.x / W, y: p.y / H })) : pts;
+      }
+      const segs: PageInkSeg[] = [];
+      for (let i = 1; i < ratioPts.length; i++) segs.push({ from: ratioPts[i - 1], to: ratioPts[i], width });
+      const stroke: PageStroke = { penType: pen.type, color: pen.color, opacity: pen.opacity, segs };
+      const next = [...strokesRef.current, stroke];
+      strokesRef.current = next; setStrokes(next); onStrokesChange?.(pageNumber, next);
+      return;
+    }
     // 스트로크를 지역변수로 먼저 캡처. (업데이터 안에서 ref를 읽으면 아래 null 대입 후
     //  실행돼 null이 저장되는 버그가 있어 redrawStrokes가 복원하지 못했음)
     const finishedStroke = currentStrokeRef.current;
@@ -286,6 +346,8 @@ export const PdfAdvancedRenderer = ({
   fileName,
   initialPageStrokes,
   onStrokesChange,
+  straightLine = false,
+  shapeMode = false,
 }: {
   fileUrl: string | null;
   pen: PenModel;
@@ -295,6 +357,8 @@ export const PdfAdvancedRenderer = ({
   fileName: string;
   initialPageStrokes?: PdfPageStrokes; // 저장된 페이지별 필기 복원용
   onStrokesChange?: (pages: PdfPageStrokes) => void; // 전체 페이지 필기 변경 알림(저장용)
+  straightLine?: boolean; // #4 자(직선)
+  shapeMode?: boolean;    // #4 도형 보정
 }) => {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -456,6 +520,8 @@ export const PdfAdvancedRenderer = ({
                onVisible={setCurrentPageNum}
                initialStrokes={initialPageStrokes?.[i + 1]}
                onStrokesChange={handlePageStrokesChange}
+               straightLine={straightLine}
+               shapeMode={shapeMode}
              />
          ))}
       </div>

@@ -81,17 +81,24 @@ export function recognizeShape(points: { x: number; y: number }[]): RecognizedSh
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const p of points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
   const w = maxX - minX, h = maxY - minY, diag = Math.hypot(w, h);
-  if (diag < 12) return null;
+  if (diag < 16) return null; // 너무 작은 자국은 보정 안 함
   const start = points[0], end = points[points.length - 1];
-  const closed = Math.hypot(end.x - start.x, end.y - start.y) < diag * 0.25;
+  const closeDist = Math.hypot(end.x - start.x, end.y - start.y);
+  // 경로 총길이 (직선성·닫힘 판단용)
+  let pathLen = 0;
+  for (let i = 1; i < points.length; i++) pathLen += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  const closed = closeDist < diag * 0.22;
+
   if (!closed) {
-    // 열린 곡선: start-end 직선에서 평균 수직편차가 작으면 직선으로 인식
+    // 직선: start-end 선에서 평균 수직편차가 작고 + 별로 안 꺾임(현/경로길이 ≈ 1)
     let dev = 0;
     for (const p of points) dev += distancePointToSegment(p, start, end);
     dev /= points.length;
-    return dev < diag * 0.07 ? { kind: 'line', a: { ...start }, b: { ...end } } : null;
+    const straightness = Math.hypot(end.x - start.x, end.y - start.y) / (pathLen || 1);
+    return (dev < diag * 0.06 && straightness > 0.85) ? { kind: 'line', a: { ...start }, b: { ...end } } : null;
   }
-  // 닫힘: 타원 vs 사각형 (경계 적합 오차 비교)
+
+  // 닫힘: 타원 vs 사각형 경계 적합 오차 비교 + 수용 임계(어느 것도 안 맞으면 보정 안 함)
   const cx = minX + w / 2, cy = minY + h / 2, rx = w / 2 || 1, ry = h / 2 || 1;
   let ellErr = 0, rectErr = 0;
   for (const p of points) {
@@ -100,9 +107,11 @@ export function recognizeShape(points: { x: number; y: number }[]): RecognizedSh
     rectErr += dmin / diag;
   }
   ellErr /= points.length; rectErr /= points.length;
-  return ellErr <= rectErr
-    ? { kind: 'ellipse', cx, cy, rx, ry }
-    : { kind: 'rect', x: minX, y: minY, w, h };
+  // 타원·사각형 각각 수용 임계(삼각형·낙서는 둘 다 못 넘어 null). 둘 다 넘으면 오차 작은 쪽.
+  const ellOk = ellErr < 0.10, rectOk = rectErr < 0.06;
+  if (!ellOk && !rectOk) return null;
+  if (ellOk && (!rectOk || ellErr <= rectErr)) return { kind: 'ellipse', cx, cy, rx, ry };
+  return { kind: 'rect', x: minX, y: minY, w, h };
 }
 
 // 인식된 도형을 폴리라인 점들로 변환(스트로크 세그먼트 생성용).
@@ -225,7 +234,12 @@ export function widthForPressure(model: PenModel, pressure: number): number {
 //  - 데이터 모델(segs)·동기화는 그대로. 렌더만 부드럽게 → 유실0·리플레이 무손상.
 //  - 볼펜·연필·브러쉬만 스무딩(둥근 캡이라 이음새 없음). 형광펜·지우개는 기존 직선 유지
 //    (형광펜 납작 캡은 곡선 분할 시 이음새가 생겨서 제외).
-export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: InkStroke) {
+// InkStroke(빈 노트)·PageStroke(PDF, 픽셀 환산) 양쪽이 만족하는 구조적 서브셋을 받는다.
+type SmoothStrokeLike = {
+  segs: { from: { x: number; y: number }; to: { x: number; y: number }; width: number }[];
+  penType: PenType; color: string; opacity: number;
+};
+export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: SmoothStrokeLike) {
   const segs = stroke.segs;
   if (!segs.length) return;
   if (stroke.penType === 'highlighter' || stroke.penType === 'eraser' || segs.length < 2) {
