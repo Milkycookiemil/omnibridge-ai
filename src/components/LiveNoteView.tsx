@@ -205,6 +205,20 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     const n = inkRef.current?.highlightByTime(line.sec, 6) ?? 0;
     showToastMsg(n > 0 ? `이 시점에 그린 필기 ${n}획을 표시했어요` : '이 시점에 그린 필기가 없어요');
   };
+  // 역방향: 획 탭 → 그릴 때의 전사 라인으로 점프·하이라이트
+  const [transcriptHighlightIdx, setTranscriptHighlightIdx] = useState<number | null>(null);
+  const handleStrokeTap = (t: number) => {
+    const ls = linesRef.current;
+    if (!ls.length) { showToastMsg('아직 전사된 내용이 없어요'); return; }
+    let idx = -1, best = Infinity;
+    ls.forEach((l, i) => { const d = Math.abs(l.sec - t); if (l.sec <= t + 1 && d < best) { best = d; idx = i; } });
+    if (idx < 0) ls.forEach((l, i) => { const d = Math.abs(l.sec - t); if (d < best) { best = d; idx = i; } });
+    if (idx < 0) return;
+    setTranscriptOpen(true);
+    setTranscriptHighlightIdx(idx);
+    setTimeout(() => setTranscriptHighlightIdx(null), 2000);
+    showToastMsg('이 필기를 그릴 때의 설명으로 이동했어요');
+  };
 
   // 실시간 AI 요약 (BYOK). 녹음 중이고 키가 설정돼 있으면 전사 텍스트를 주기적으로 Claude로
   // 요약해 카드로 표시. 키가 없으면 안내 카드, 실패 시 오류 카드.
@@ -455,6 +469,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       straightLine={straightLine}
       shapeMode={shapeMode}
       strokeTime={() => (isRecordingRef.current ? recordingTimeRef.current : undefined)}
+      onStrokeTap={handleStrokeTap}
       onHistoryChange={({ canUndo, canRedo }) => { setCanUndo(canUndo); setCanRedo(canRedo); }}
       backgroundStyle={backgroundStyle}
       onDelta={handleLocalDelta}
@@ -565,6 +580,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
         open={transcriptOpen}
         onToggle={() => setTranscriptOpen(!transcriptOpen)}
         onLineClick={handleTranscriptLineClick}
+        highlightIndex={transcriptHighlightIdx}
         summarySlot={summaryContent}
       />
 

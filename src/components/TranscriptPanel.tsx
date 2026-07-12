@@ -15,16 +15,24 @@ interface TranscriptPanelProps {
   onToggle: () => void;
   summarySlot?: React.ReactNode; // 오른쪽 요약 컬럼 내용
   onLineClick?: (line: TranscriptLine) => void; // P1: 라인 클릭 → 그 시각의 필기 하이라이트
+  highlightIndex?: number | null; // P1 역방향: 획 탭 시 점프해 반짝일 라인
 }
 
 const PANEL_H = 248; // px
 
-export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, summarySlot, onLineClick }: TranscriptPanelProps) {
+export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, summarySlot, onLineClick, highlightIndex }: TranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [lines.length]);
+
+  // 역방향 점프: 지정 라인으로 스크롤
+  useEffect(() => {
+    if (highlightIndex == null || !scrollRef.current) return;
+    const el = scrollRef.current.querySelector(`[data-line="${highlightIndex}"]`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [highlightIndex]);
 
   const statusBadge = () => {
     switch (status) {
@@ -87,8 +95,12 @@ export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, 
                   lines.map((l, i) => (
                     <button
                       key={i}
+                      data-line={i}
                       onClick={() => onLineClick?.(l)}
-                      className="w-full flex gap-3 text-sm text-left rounded-lg -mx-2 px-2 py-1 hover:bg-blue-50 transition-colors group"
+                      className={cn(
+                        "w-full flex gap-3 text-sm text-left rounded-lg -mx-2 px-2 py-1 transition-colors group",
+                        highlightIndex === i ? "bg-amber-100 ring-1 ring-amber-300" : "hover:bg-blue-50"
+                      )}
                       title="이 시점에 그린 필기 보기"
                     >
                       <span className="font-mono text-xs text-blue-500 font-bold shrink-0 mt-0.5 group-hover:underline">{l.time}</span>

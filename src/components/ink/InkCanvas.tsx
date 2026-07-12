@@ -48,6 +48,7 @@ interface InkCanvasProps {
   shapeMode?: boolean;                   // #4 도형 보정 모드
   onHistoryChange?: (s: { canUndo: boolean; canRedo: boolean }) => void; // #3 버튼 활성화용
   strokeTime?: () => number | undefined; // P1 녹음 중이면 획에 찍을 경과 초, 아니면 undefined
+  onStrokeTap?: (t: number) => void;     // P1 역방향: 선택 모드에서 시각 있는 획 탭 → 전사로 점프
 }
 
 type SelBox = { x: number; y: number; w: number; h: number };
@@ -58,7 +59,7 @@ type DragState =
   | { mode: 'scale'; anchor: { x: number; y: number }; baseBox: SelBox };
 
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
-  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime },
+  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -476,7 +477,20 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     if (!d) return;
     if (d.mode === 'lasso') {
       const poly = lassoRef.current ?? []; lassoRef.current = null;
-      if (poly.length < 3) { composite(); return; }
+      if (poly.length < 3) {
+        // 탭(드래그 없음): 활성 레이어에서 시각(t) 있는 획을 짚으면 전사로 점프
+        const tap = poly[0];
+        if (tap && onStrokeTap) {
+          const thr = 14;
+          let hitT: number | undefined;
+          for (const st of strokesRef.current.values()) {
+            if (st.layerId !== activeLayerRef.current || st.t === undefined || st.penType === 'eraser') continue;
+            if (st.segs.some((s) => distancePointToSegment(tap, s.from, s.to) <= thr + s.width / 2)) hitT = st.t; // 위 획 우선
+          }
+          if (hitT !== undefined) { onStrokeTap(hitT); }
+        }
+        composite(); return;
+      }
       const ids: string[] = [];
       for (const st of strokesRef.current.values()) {
         if (st.layerId !== activeLayerRef.current) continue;
