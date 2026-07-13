@@ -13,7 +13,11 @@ export async function getTranscriber(onProgress?: (p: ModelProgress) => void): P
       const { pipeline, env } = await import('@huggingface/transformers');
       // 원격(HF Hub) 모델 사용
       env.allowLocalModels = false;
+      // dtype: 'fp32' 필수. @huggingface/transformers v4의 onnxruntime-web은 whisper-tiny의
+      // 양자화/fp16 디코더 세션 생성에 실패한다(qdq_actions "Missing required scale" MatMulNBits)
+      // → 모델 로드가 통째로 실패해 전사가 전혀 안 됐음. fp32 디코더만 정상 로드된다(≈145MB, 최초 1회·캐시).
       return pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+        dtype: 'fp32',
         progress_callback: onProgress as any,
       });
     })();

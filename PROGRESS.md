@@ -44,6 +44,14 @@ alter table public.notes add column if not exists transcript jsonb;
 - **수정**: `pdfStore`에 방금 고른 PDF File을 세션 메모리에 잠시 두는 캐시(`stashPdfFile`/`takePdfFile`/`forgetPdfFile`). NewNoteModal이 stash → LiveNoteView가 `downloadPdf`보다 먼저 캐시 사용 → 게스트도 즉시 렌더, 로그인 사용자는 불필요한 Storage 재다운로드도 절약. 삭제 시 forgetPdfFile로 정리. tsc 0에러·build 통과.
 - **실브라우저 검증(게스트, 테스트 PDF 2p 주입)**: PDF 2페이지 렌더 + 페이지 네비(1/2, ◀▶) / **PDF 헤더 녹음버튼 존재**(지난 세션 수정 확증) / PDF 위 **스무딩**(지그재그 라운딩 6282px) / **undo**(6282→0) / **도형 인식**(원 스냅 bbox 220×220) / **자**(±22px 흔든 입력→피팅각 0.2° 수평, 세로퍼짐 7px=선두께).
 
+### ✅ 전사 완전 복구 (2026-07-13 세션) — 그동안 전사가 0줄이던 근본 버그
+- **증상**: 녹음해도 전사 라인이 하나도 안 생김.
+- **원인(런타임 진단)**: 모델 파일은 다 받아지는데 **onnxruntime-web이 세션 생성에서 실패** — `qdq_actions.cc:137 TransposeDQWeightsForMatMulNBits Missing required scale`. `@huggingface/transformers` v4.2.0의 ONNX 런타임이 whisper-tiny의 **양자화(q8)/fp16 디코더**를 못 연다(모델 export 불호환). getTranscriber가 매번 reject → flush마다 throw → 라인 0.
+- **검증**: 브라우저에서 실제 파이프라인에 합성 PCM을 먹여 dtype/모델별로 실측 — `Xenova/whisper-tiny` **q8·fp16 실패**, `onnx-community/whisper-base` **q8·fp16도 동일 실패**, **fp32만 세션 생성+한국어 출력 성공**.
+- **수정**: `transcription.ts`에서 `pipeline(..., { dtype: 'fp32' })` 명시. 실제 앱 코드 경로(`getTranscriber`→`transcribePcm16k`)로 재검증 통과. tsc 0에러·build 통과.
+- **트레이드오프**: fp32라 최초 다운로드 ~145MB(encoder 31MB+decoder 113MB, 이후 캐시). 이 transformers 버전에선 다국어(한국어) 되는 유일한 조합. 크기 줄이려면 추후 transformers/ORT 업그레이드 후 q8 재시도.
+- **남은 확인**: 실제 마이크로 한국어 정확도(whisper-tiny 한계)·5초 윈도 지연은 실사용 확인 필요.
+
 ### ⚠️ 아직 실브라우저 미검증(마이크 필요 등)
 - **녹음→전사→라인클릭/획탭 싱크**: 실제 마이크 있는 브라우저에서 확인 필요(프리뷰 팬 마이크 차단).
 - **PDF 올가미**: 엔진 공용이라 기본 선택은 될 것으로 보이나 이번에 미측정. PDF 올가미 **크기조절**은 PROGRESS상 원래 후속 과제.
