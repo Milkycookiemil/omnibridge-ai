@@ -137,7 +137,8 @@ settings.json에 hooks를 등록한다. "매번 X 할 때마다 Y 해줘" 같은
   - 동기화 아키텍처: CRDT 델타 → Supabase Realtime broadcast(실시간 릴레이, 0.1초) → Debounce 후 `.ob`로 Google Drive 영속 저장. 유실 0 무결성이 핵심 가치이므로 획 삭제조차 `erase_strokes` append-only 연산으로 CRDT에 쌓는 구조를 깨지 말 것.
   - Supabase 키가 없으면 **시뮬레이션 모드**로 정상 동작(발표·시연 가능). 실연동은 `.env.local`에 `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` 입력 시 활성화.
   - 드로잉은 공용 엔진(`inkEngine` + `InkCanvas` + `PenToolbar`)으로 통합됨 — 빈 노트·슬라이드·PDF가 동일 엔진 사용. 새 드로잉 화면도 자체 레거시 드로잉을 만들지 말고 공용 엔진을 재사용할 것.
-  - 상세 작업 내역·아키텍처는 [`PROGRESS.md`](./PROGRESS.md) 참고.
+  - **세션 재개 시(토큰 절약): `git log --oneline -8` + [`PROGRESS.md`](./PROGRESS.md) 상단 재개 지점 + `MEMORY.md`만 읽는다.** PROGRESS.md는 "지금 어디까지/다음 뭐"만 담는 가벼운 파일. 과거 세션 상세 로그·아키텍처는 [`PROGRESS-archive.md`](./PROGRESS-archive.md)에 있고, 필요할 때만 `Grep`으로 키워드만 뽑아 읽는다(통독 금지).
+  - 세션 종료·의미 있는 진척 시 PROGRESS.md 상단 "재개 지점"을 갱신한다(HEAD·빌드상태·다음 후보). 오래된 상세 로그는 archive로 내린다.
 
 ---
 

@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# 참고자료 덤프(경쟁 제품 등) — 프로젝트 코드 아님
+참고맨/
