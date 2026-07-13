@@ -38,9 +38,15 @@ alter table public.notes add column if not exists transcript jsonb;
 - ✅ **자(직선+각도스냅)**: ±14px 흔든 입력→완벽 수평선 / ~40° 입력→**45° 스냅**(피팅각 45.0°, bbox 195×195 정사각).
 - ⛔ **획↔전사 싱크**: 프리뷰 팬 **마이크 차단**(getUserMedia NotAllowedError) → 전사 라인 생성 불가 → 라인클릭/획탭 시각 검증 **여전히 불가**. 앱은 "오프라인 필기 모드"로 우아하게 폴백(크래시 없음). 매칭 수학은 node 로직 테스트가 커버.
 
-### ⚠️ 아직 실브라우저 미검증(마이크·PDF 필요)
-- **녹음→전사→라인클릭/획탭 싱크**: 실제 마이크 있는 브라우저에서 확인 필요.
-- **PDF 녹음버튼 / PDF 위 스무딩·자·도형·올가미·undo/redo**: 이번엔 빈 노트만 검증. PDF 파일로 별도 확인 필요.
+### ✅ PDF 경로 검증 (2026-07-13 세션) + 🐛 게스트 PDF 버그 수정
+검증 중 **게스트는 PDF 노트를 아예 못 여는 버그**를 발견·수정했다.
+- **버그**: App은 `noteId` 있으면 WorkspaceView로 라우팅(App.tsx:154) → WorkspaceView(:130)가 `navContext.file`을 안 넘김 → LiveNoteView는 `downloadPdf`에 의존 → 게스트(Storage 없음, pdfStore.ts:66 `return null`)는 **"PDF 로딩 중…" 영구 멈춤**. 공개 "게스트로 둘러보기" 진입에서 간판 기능이 죽던 문제.
+- **수정**: `pdfStore`에 방금 고른 PDF File을 세션 메모리에 잠시 두는 캐시(`stashPdfFile`/`takePdfFile`/`forgetPdfFile`). NewNoteModal이 stash → LiveNoteView가 `downloadPdf`보다 먼저 캐시 사용 → 게스트도 즉시 렌더, 로그인 사용자는 불필요한 Storage 재다운로드도 절약. 삭제 시 forgetPdfFile로 정리. tsc 0에러·build 통과.
+- **실브라우저 검증(게스트, 테스트 PDF 2p 주입)**: PDF 2페이지 렌더 + 페이지 네비(1/2, ◀▶) / **PDF 헤더 녹음버튼 존재**(지난 세션 수정 확증) / PDF 위 **스무딩**(지그재그 라운딩 6282px) / **undo**(6282→0) / **도형 인식**(원 스냅 bbox 220×220) / **자**(±22px 흔든 입력→피팅각 0.2° 수평, 세로퍼짐 7px=선두께).
+
+### ⚠️ 아직 실브라우저 미검증(마이크 필요 등)
+- **녹음→전사→라인클릭/획탭 싱크**: 실제 마이크 있는 브라우저에서 확인 필요(프리뷰 팬 마이크 차단).
+- **PDF 올가미**: 엔진 공용이라 기본 선택은 될 것으로 보이나 이번에 미측정. PDF 올가미 **크기조절**은 PROGRESS상 원래 후속 과제.
 - **고정 비율 페이지 리사이즈**: 창 리사이즈 시 찌그러짐 없는지 미확인.
 
 ### 바로 이어서 할 후보

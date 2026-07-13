@@ -19,6 +19,16 @@ const uid = (): string | null => getCurrentUser()?.id ?? null;
 export const isFileStoreReady = (): boolean =>
   isSupabaseConfigured && supabase != null && uid() != null;
 
+// 방금 고른 PDF File을 세션 메모리에 잠시 보관한다.
+// App은 noteId가 있으면 WorkspaceView로 라우팅하는데, WorkspaceView가 navContext.file을
+// 떨어뜨려서 LiveNoteView가 원본 파일을 못 받는다. 게스트(Storage 없음)는 여기서 PDF가
+// 영영 안 뜬다. 이 캐시로 최초 렌더에서 원본을 즉시 쓰게 하고(게스트 포함), 로그인
+// 사용자의 불필요한 Storage 재다운로드도 아낀다. 노트 삭제 시 forgetPdfFile로 정리한다.
+const recentPdfFiles = new Map<string, File>();
+export const stashPdfFile = (noteId: string, file: File): void => { recentPdfFiles.set(noteId, file); };
+export const takePdfFile = (noteId: string): File | undefined => recentPdfFiles.get(noteId);
+export const forgetPdfFile = (noteId: string): void => { recentPdfFiles.delete(noteId); };
+
 const pdfPath = (u: string, noteId: string) => `${u}/${noteId}.pdf`;
 
 // 계정 저장 여유가 없을 때 던지는 에러 (UI가 안내 문구로 구분해 처리).
