@@ -18,6 +18,8 @@ import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
 import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteTypedText, saveNoteTranscript } from '../lib/notesStore';
 import { downloadPdf, takePdfFile } from '../lib/pdfStore';
+import { buildRecordingStream, NO_SYSTEM_AUDIO } from '../lib/audioCapture';
+import { RecordSourcePopover } from './RecordSourcePopover';
 import type { PdfPageStrokes } from '../lib/pdfInk';
 import { usePreferences } from '../lib/preferences';
 import { useDeviceMode } from '../lib/deviceMode';
@@ -25,7 +27,7 @@ import { summarizeTranscript, isAiSummaryConfigured } from '../lib/aiSummary';
 
 export function LiveNoteView({ navContext }: { navContext?: any }) {
   const { pushDelta } = useSyncEngine();
-  const { notificationsEnabled, setNotificationsEnabled, transcriptOpen, setTranscriptOpen } = usePreferences();
+  const { notificationsEnabled, setNotificationsEnabled, transcriptOpen, setTranscriptOpen, audioSource, micDeviceId } = usePreferences();
   const { deviceMode } = useDeviceMode();
   const transcription = useTranscription();
   const isQuickRecord = navContext?.quickRecord === true;
@@ -205,6 +207,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
 
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const streamCleanupRef = useRef<(() => void) | null>(null); // 녹음 스트림 원본 정리 함수
 
   // 녹음 경과 시간 타이머 + 정지 시 요약 초기화
   useEffect(() => {
@@ -289,7 +292,9 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const toggleRecording = async () => {
     if (!isRecording) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // 소스 선택(마이크/시스템/둘 다)에 따라 스트림 구성. cleanup은 정지 시 호출.
+        const { stream, cleanup } = await buildRecordingStream(audioSource, micDeviceId);
+        streamCleanupRef.current = cleanup;
         const recorder = new MediaRecorder(stream);
         const chunks: BlobPart[] = [];
 
@@ -332,14 +337,21 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
         transcription.start(stream);
         if (!transcriptOpen) setTranscriptOpen(true);
       } catch (err) {
-        console.error("Mic access denied", err);
-        alert("마이크 접근 권한이 필요합니다.");
+        console.error("녹음 시작 실패", err);
+        const msg = (err as Error)?.message === NO_SYSTEM_AUDIO
+          ? '시스템 소리를 캡처하려면 화면 공유 창에서 "오디오 공유"를 체크해 주세요.'
+          : audioSource === 'mic'
+            ? '마이크 접근 권한이 필요합니다.'
+            : '녹음 소스를 시작하지 못했습니다. 권한·화면 공유 선택을 확인해 주세요.';
+        showToastMsg(msg);
       }
     } else {
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
         mediaRecorder.stream.getTracks().forEach(track => track.stop());
       }
+      streamCleanupRef.current?.(); // 원본 마이크/시스템 트랙 + 믹싱 컨텍스트 정리
+      streamCleanupRef.current = null;
       setIsRecording(false);
       transcription.stop();
     }
@@ -487,6 +499,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
           ))}
         </div>
       )}
+      <RecordSourcePopover disabled={isRecording} />
       <button
         onClick={toggleRecording}
         className={cn("flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm transition-colors shadow-sm",

@@ -53,6 +53,12 @@ alter table public.notes add column if not exists transcript jsonb;
 - **남은 확인**: 실제 마이크로 한국어 정확도(whisper-tiny 한계)·5초 윈도 지연은 실사용 확인 필요.
 - **후속 수정(조용한 실패 노출)**: 모델 로드 실패를 삼키고 '청취 중'으로 진행하던 것 → 실패 시 status `'error'`+안내 메시지 노출하고 캡처 시작 안 함(`useTranscription`). rejected 싱글톤이 재시도를 영구 차단하던 것도 수정(`transcription.ts`, 실패 시 `transcriberPromise=null`). TranscriptPanel에 '전사 오류' 뱃지+메시지. → "청취 중인데 라인 0"이 이제 명확한 에러로 보임. (증상 신고자: 실제로는 옛 캐시 번들 로드 실패였을 가능성 → 강력 새로고침 필요)
 
+### ✅ 빠른 녹음 버그 수정 + 🎙️ 녹음 소스/마이크 선택 (2026-07-13 세션)
+- **버그 수정(커밋 `dc59f82`)**: 메인 "빠른 녹음 시작"이 `isRecording=useState(isQuickRecord)`로 **UI만 REC**이고 실제 getUserMedia/transcription.start가 안 불려 전사가 시작 안 되던 문제 → 진입 시 실제 `toggleRecording()`을 호출하는 이펙트 추가. 프리뷰에서 빠른 녹음 클릭 시 getUserMedia 호출됨을 확인.
+- **신규 기능(미커밋 시점 기준)**: 전사 소스 선택(**마이크 / 시스템 소리 / 마이크+시스템**) + **마이크 장치 선택**. 녹음 버튼 옆 톱니 팝오버(`RecordSourcePopover`), 설정은 `preferences`에 영속. `audioCapture.ts`의 `buildRecordingStream`이 소스별 스트림 구성(마이크=getUserMedia+deviceId, 시스템=getDisplayMedia 후 비디오 트랙 제거, 둘다=Web Audio 믹싱). 빠른녹음·노트·PDF 녹음이 모두 공용 `recordButton`을 쓰므로 한 번에 적용.
+  - **제약**: 브라우저는 윈도우 시스템 소리를 화면공유(getDisplayMedia)로만 캡처 → 시스템/둘다 선택 시 녹음 시작에 "화면 공유 + 오디오 공유" 팝업 필요(팝오버에 안내 문구). 인강 탭은 그 탭, 줌·PC앱은 전체화면+시스템오디오.
+  - **검증 한계**: tsc 0에러·build 통과·새 코드 로드·크래시 없음·createNote 정상 확인. 단 **팝오버 실화면 렌더와 실제 3소스 녹음은 미검증** — 프리뷰 팬이 이 세션에서 마이크/getDisplayMedia 차단 + 에디터 뷰 전환이 degraded(대시보드→에디터 네비 실패, 단 이 경로는 이번 변경과 무관한 기존 코드) → 마이크 있는 실기기 확인 필요.
+
 ### ⚠️ 아직 실브라우저 미검증(마이크 필요 등)
 - **녹음→전사→라인클릭/획탭 싱크**: 실제 마이크 있는 브라우저에서 확인 필요(프리뷰 팬 마이크 차단).
 - **PDF 올가미**: 엔진 공용이라 기본 선택은 될 것으로 보이나 이번에 미측정. PDF 올가미 **크기조절**은 PROGRESS상 원래 후속 과제.
