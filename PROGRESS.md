@@ -9,18 +9,14 @@
 
 ---
 
-## ⏩ 다음 세션 재개 지점 (2026-07-13 갱신)
+## ⏩ 다음 세션 재개 지점 (2026-07-20 갱신)
 
-**작업트리 clean · 로컬=원격(전부 push됨) · `tsc --noEmit` 0에러 · `npm run build` 통과.** HEAD=`5eff884`.
+**작업트리 clean · 로컬=원격(전부 push됨·배포 트리거됨) · `tsc --noEmit` 0에러 · `npm run build` 통과.** HEAD=`8b56473`(퀵 팔레트 터치 견고화).
+
+> ✅ Supabase `transcript jsonb` 마이그레이션 **실행 완료**(2026-07-20 사용자 확인) — 클라우드 노트 저장 정상.
+> 다음 큰 후보: **③ 페이지 관리(여러 장)**(삼성노트 보강 3/3, CRDT 무결성 주의) / 실태블릿에서 퀵 팔레트 길게 누르기·핀치 줌 확인.
 
 > ⚠️ **repo 루트의 `참고맨/` 폴더는 프로젝트 코드가 아님** — Edupen Pro(경쟁 전자칠판 SW) 참고 덤프. 커밋하지 말 것(`.gitignore` 대상 또는 프로젝트 밖으로).
-
-### 🔴 먼저 할 것 — 미실행 시 클라우드 노트 저장이 깨짐
-Supabase SQL Editor에서 실행:
-```sql
-alter table public.notes add column if not exists transcript jsonb;
-```
-> `toRow`가 이제 항상 `transcript`를 upsert에 포함 → 컬럼 없으면 **모든 노트의 클라우드 저장 실패**(PostgREST unknown column). 로컬 IndexedDB는 무관. `supabase/schema.sql`에도 문서화됨.
 
 ### 이번 세션(2026-07-11~13) 완료·커밋 — 필기 기능 대확장
 - **필기 P0 4개**: ①입력 스무딩(중점 이차베지어, 각짐 제거) ②올가미 선택(이동·크기·색변경·복제·삭제, 삭제+재추가 델타로 유실0 동기화) ③undo/redo(동작별 {removed,added} 기록) ④자(직선, 45° 스냅)·도형 자동보정(직선/원/사각형 인식, 삼각형·낙서 거부). + 고정 비율 페이지(리사이즈 찌그러짐 해결)·도구별 커서(원/납작사각형)·펜 팝오버 실시간 미리보기.
