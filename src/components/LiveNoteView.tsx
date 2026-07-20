@@ -10,6 +10,7 @@ import { PdfAdvancedRenderer, type PdfRendererHandle } from './pdf/PdfAdvancedRe
 import { LectureCapture } from './pdf/LectureCapture';
 import { InkCanvas, type InkCanvasHandle } from './ink/InkCanvas';
 import { PenToolbar } from './ink/PenToolbar';
+import { QuickColorPalette } from './ink/QuickColorPalette';
 import { TranscriptPanel } from './TranscriptPanel';
 import { usePenState } from '../hooks/usePenState';
 import { useTranscription } from '../hooks/useTranscription';
@@ -566,6 +567,12 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
                 activePen={activePen}
                 setActiveType={(t) => { pickTool('pen'); setActiveType(t); }}
                 updateActivePen={updateActivePen}
+              />
+              <div className="w-px h-6 bg-slate-200 mx-0.5" />
+              {/* 3색 퀵 팔레트(즐겨찾기) — 올가미 바로 왼쪽. 클릭=적용/우클릭=현재색 저장 */}
+              <QuickColorPalette
+                activeColor={activePen.color}
+                onPick={(c) => { pickTool('pen'); updateActivePen({ color: c }); }}
               />
               <div className="w-px h-6 bg-slate-200 mx-0.5" />
               {/* 올가미 / 자(직선) / 도형 보정 — 상호 배타, 재탭 시 펜으로 복귀 */}

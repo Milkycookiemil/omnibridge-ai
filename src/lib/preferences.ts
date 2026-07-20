@@ -12,6 +12,7 @@ interface PersistedPrefs {
   transcriptOpen: boolean; // 전사 패널 펼침/접힘 상태
   audioSource: AudioSource; // 전사/녹음 소스: 마이크 / 시스템(화면공유) / 둘 다
   micDeviceId: string | null; // 선택한 마이크 장치(없으면 기본 마이크)
+  favoriteColors: string[]; // 필기 툴바 3색 퀵 팔레트(즐겨찾기). 클릭=적용/우클릭=현재색 저장
 }
 
 const DEFAULTS: PersistedPrefs = {
@@ -19,6 +20,7 @@ const DEFAULTS: PersistedPrefs = {
   transcriptOpen: true,
   audioSource: 'mic',
   micDeviceId: null,
+  favoriteColors: ['#f59e0b', '#3b82f6', '#334155'], // 주황 / 파랑 / 짙은 회색
 };
 
 const loadPrefs = (): PersistedPrefs => {
@@ -36,6 +38,7 @@ interface PreferencesState extends PersistedPrefs {
   setTranscriptOpen: (open: boolean) => void;
   setAudioSource: (source: AudioSource) => void;
   setMicDeviceId: (id: string | null) => void;
+  setFavoriteColor: (index: number, color: string) => void;
 }
 
 const persist = (prefs: PersistedPrefs) => {
@@ -52,6 +55,7 @@ const snapshot = (s: PreferencesState): PersistedPrefs => ({
   transcriptOpen: s.transcriptOpen,
   audioSource: s.audioSource,
   micDeviceId: s.micDeviceId,
+  favoriteColors: s.favoriteColors,
 });
 
 export const usePreferences = create<PreferencesState>((set, get) => ({
@@ -70,6 +74,12 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
   },
   setMicDeviceId: (id) => {
     set({ micDeviceId: id });
+    persist(snapshot(get()));
+  },
+  setFavoriteColor: (index, color) => {
+    const next = [...get().favoriteColors];
+    next[index] = color;
+    set({ favoriteColors: next });
     persist(snapshot(get()));
   },
 }));
