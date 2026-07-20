@@ -10,7 +10,7 @@
 // 동기화: 로컬 입력은 onDelta로 세그먼트(strokeId/layerId 포함)·erase_strokes 연산을 내보내고,
 // 원격/리플레이는 ref.applyDelta로 동일 경로를 타므로 미러링·유실0 리플레이가 그대로 유지된다.
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Copy, Trash2 } from 'lucide-react';
+import { Copy, Trash2, Minus, Plus } from 'lucide-react';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
   pointInPolygon, strokePoints, strokeBounds, translateStroke, scaleStroke,
@@ -86,8 +86,16 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   // 표시 스케일(표시 px / 캔버스 논리 px) — 커서 굵기를 실제 렌더 굵기와 맞춘다.
   const [dispScale, setDispScale] = useState(1);
-  // 고정 비율 페이지 크기·컨테이너 내 오프셋(px) — 균일 축소 + 오버레이 좌표 변환용.
+  // 고정 비율 페이지 크기(화면 맞춤=100% 기준)·컨테이너 내 오프셋(px).
   const [page, setPage] = useState({ w: 0, h: 0, offX: 0, offY: 0 });
+  // 확대/축소 배율. 1 = 100%(화면 맞춤). 25%~400% 범위. 확대 시 페이지 박스가 커지고 스크롤된다.
+  const [zoom, setZoom] = useState(1);
+  const ZOOM_MIN = 0.25, ZOOM_MAX = 4;
+  const setZoomClamped = (z: number | ((p: number) => number)) =>
+    setZoom((prev) => {
+      const next = typeof z === 'function' ? z(prev) : z;
+      return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(next * 100) / 100));
+    });
 
   // P1 전사→획 하이라이트 박스(잠깐 반짝이고 사라짐)
   const [highlightBox, setHighlightBox] = useState<SelBox | null>(null);
@@ -339,13 +347,17 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       let pw = cw, ph = cw / aspect;
       if (ph > ch) { ph = ch; pw = ch * aspect; } // 세로가 넘치면 높이에 맞춤
       setPage({ w: pw, h: ph, offX: (cw - pw) / 2, offY: (ch - ph) / 2 });
-      setDispScale(pw / width);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [width, height]);
+
+  // 표시 스케일 = 화면맞춤 스케일 × 줌. 오버레이·커서·올가미가 모두 이 값을 쓴다.
+  useEffect(() => {
+    setDispScale((page.w ? page.w / width : 1) * zoom);
+  }, [page.w, zoom, width]);
 
   // 크기 변경 시 오프스크린 재생성 + 모델에서 재렌더 (내용 유실 없음)
   useEffect(() => {
@@ -641,15 +653,25 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }
   };
 
+  // Ctrl/⌘ + 휠 → 확대/축소 (일반 휠은 스크롤 그대로).
+  const handleWheel = (e: React.WheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    setZoomClamped((z) => z * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+  };
+
   return (
     <div
       ref={containerRef}
-      className={`relative flex items-center justify-center overflow-hidden bg-slate-100 ${className ?? ''}`}
+      className={`relative overflow-hidden bg-slate-100 ${className ?? ''}`}
     >
-      {/* 고정 비율 페이지: 컨테이너에 균일 축소로 맞춰 절대 찌그러지지 않는다. */}
+      {/* 확대 시 스크롤되는 뷰포트. 페이지가 작으면 가운데 정렬, 크면 스크롤. */}
+      <div className="absolute inset-0 overflow-auto" onWheel={handleWheel}>
+      <div className="min-w-full min-h-full flex items-center justify-center p-6">
+      {/* 고정 비율 페이지: 화면맞춤(100%)에 zoom 배율을 곱해 크기 결정. 찌그러짐 0. */}
       <div
-        className="relative bg-white shadow-md"
-        style={{ width: page.w || '100%', height: page.h || '100%' }}
+        className="relative bg-white shadow-md shrink-0"
+        style={{ width: (page.w * zoom) || '100%', height: (page.h * zoom) || '100%' }}
       >
         {backgroundImage && (
           <img
@@ -705,6 +727,16 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
           </>
         )}
       </div>
+      </div>
+      </div>
+
+      {/* 확대/축소 컨트롤 (100% = 화면 맞춤). Ctrl/⌘+휠로도 조절. */}
+      <div className="absolute bottom-3 right-3 z-30 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none">
+        <button onClick={() => setZoomClamped((z) => z / 1.25)} title="축소" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={zoom <= ZOOM_MIN}><Minus className="w-4 h-4" /></button>
+        <button onClick={() => setZoomClamped(1)} title="100%로 맞춤" className="text-xs font-bold text-slate-700 w-12 tabular-nums hover:text-blue-600">{Math.round(zoom * 100)}%</button>
+        <button onClick={() => setZoomClamped((z) => z * 1.25)} title="확대" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={zoom >= ZOOM_MAX}><Plus className="w-4 h-4" /></button>
+      </div>
+
       {showLayers && (
         <LayerPanel
           layers={layers}
