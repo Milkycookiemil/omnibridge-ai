@@ -123,7 +123,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     };
   }, [noteId]);
 
-  const [isRecording, setIsRecording] = useState(isQuickRecord);
+  const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [visibleCards, setVisibleCards] = useState<SummaryCard[]>([]);
   const [showTask, setShowTask] = useState(false);
@@ -344,6 +344,18 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       transcription.stop();
     }
   };
+
+  // 빠른 녹음: 진입 시 실제 녹음+전사를 자동 시작한다.
+  // (예전엔 isRecording만 true로 두어 UI만 REC이고 getUserMedia/transcription.start가
+  //  안 불려 전사가 시작되지 않았음 — "대기"에서 멈추던 버그)
+  const quickStartedRef = useRef(false);
+  useEffect(() => {
+    if (isQuickRecord && !quickStartedRef.current) {
+      quickStartedRef.current = true;
+      void toggleRecording();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isQuickRecord]);
 
   const handleModeSwitch = () => {
     const newMode = aiMode === 'npu' ? 'cloud' : 'npu';
