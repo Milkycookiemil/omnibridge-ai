@@ -4,6 +4,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
+import { QuickColorPalette } from '../ink/QuickColorPalette';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, cursorForPen,
   snapLineEnd, recognizeShape, shapeToPoints, pointInPolygon, distancePointToSegment,
@@ -720,6 +721,12 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
            activePen={pen}
            setActiveType={(t) => { pickTool('pen'); setActiveType(t); }}
            updateActivePen={updateActivePen}
+         />
+         <div className="w-px h-6 bg-slate-200 mx-0.5" />
+         {/* 3색 퀵 팔레트(즐겨찾기) — 캔버스 노트와 동일하게 올가미 바로 왼쪽 */}
+         <QuickColorPalette
+           activeColor={pen.color}
+           onPick={(c) => { pickTool('pen'); updateActivePen({ color: c }); }}
          />
          <div className="w-px h-6 bg-slate-200 mx-0.5" />
          <button onClick={() => pickTool(selectMode ? 'pen' : 'select')} title="올가미 선택"
