@@ -10,7 +10,7 @@
 // 동기화: 로컬 입력은 onDelta로 세그먼트(strokeId/layerId 포함)·erase_strokes 연산을 내보내고,
 // 원격/리플레이는 ref.applyDelta로 동일 경로를 타므로 미러링·유실0 리플레이가 그대로 유지된다.
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Copy, Trash2, Minus, Plus } from 'lucide-react';
+import { Copy, Trash2, Minus, Plus, ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
   pointInPolygon, strokePoints, strokeBounds, translateStroke, scaleStroke,
@@ -49,6 +49,7 @@ interface InkCanvasProps {
   onHistoryChange?: (s: { canUndo: boolean; canRedo: boolean }) => void; // #3 버튼 활성화용
   strokeTime?: () => number | undefined; // P1 녹음 중이면 획에 찍을 경과 초, 아니면 undefined
   onStrokeTap?: (t: number) => void;     // P1 역방향: 선택 모드에서 시각 있는 획 탭 → 전사로 점프
+  controlsBottomInset?: number;          // 하단 도킹 패널(전사)이 열렸을 때 페이지·줌 컨트롤을 위로 올리는 px
 }
 
 type SelBox = { x: number; y: number; w: number; h: number };
@@ -59,7 +60,7 @@ type DragState =
   | { mode: 'scale'; anchor: { x: number; y: number }; baseBox: SelBox };
 
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
-  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap },
+  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap, controlsBottomInset = 0 },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -96,6 +97,36 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       const next = typeof z === 'function' ? z(prev) : z;
       return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(next * 100) / 100));
     });
+
+  // ── 여러 페이지 (삼성노트 #13) ──────────────────────────────────────────
+  // 모델(strokesRef)은 전체 페이지의 획을 들고, 렌더·히트테스트만 현재 페이지로 필터한다.
+  // 획/델타에 page를 실어 CRDT append-only·획 삭제·리플레이 구조는 그대로 유지된다.
+  // 빈 페이지는 획이 없으면 저장할 게 없어 재방문 시 사라질 수 있다(내용 유실 0 — v1 한계).
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageCount, setPageCount] = useState(1);
+  const pageIndexRef = useRef(0);
+  const pageCountRef = useRef(1);
+  const pageOf = (st: { page?: number }) => st.page ?? 0;
+  // 원격/로드 획이 현재 페이지 수 밖을 가리키면 페이지 수를 늘린다(기기 간 페이지 자동 전파).
+  const ensurePageCount = (n: number) => {
+    if (n > pageCountRef.current) { pageCountRef.current = n; setPageCount(n); }
+  };
+  const goToPage = (i: number) => {
+    const clamped = Math.max(0, Math.min(pageCountRef.current - 1, i));
+    if (clamped === pageIndexRef.current) return;
+    pageIndexRef.current = clamped;
+    setPageIndex(clamped);
+    // 페이지가 바뀌면 선택·진행 중 제스처를 정리하고 현재 페이지 획만 다시 그린다.
+    applySelection(null);
+    previewRef.current = null; dragRef.current = null; lassoRef.current = null; gestureRef.current = null;
+    drawingRef.current = false; lastRef.current = null; currentStrokeIdRef.current = null;
+    layersRef.current.forEach((l) => rebuildLayer(l.id));
+    composite();
+  };
+  const addPage = () => {
+    ensurePageCount(pageCountRef.current + 1);
+    goToPage(pageCountRef.current - 1);
+  };
 
   // P1 전사→획 하이라이트 박스(잠깐 반짝이고 사라짐)
   const [highlightBox, setHighlightBox] = useState<SelBox | null>(null);
@@ -165,6 +196,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     const pv = previewRef.current;
     for (const stroke of strokesRef.current.values()) {
       if (stroke.layerId !== layerId) continue;
+      if (pageOf(stroke) !== pageIndexRef.current) continue; // 현재 페이지 획만 렌더
       // 이동/크기 조절 중인 선택 획은 변형본으로 미리보기(저장 데이터는 불변).
       let s = stroke;
       if (pv && selectedIdsRef.current.has(stroke.id)) {
@@ -186,15 +218,20 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       const layerId = delta.layerId ?? layersRef.current[0]?.id ?? DEFAULT_LAYER.id;
       if (delta.layerId) ensureLayer(delta.layerId);
       const strokeId = delta.strokeId ?? genId();
+      const page = delta.page ?? 0;
+      ensurePageCount(page + 1); // 원격이 새 페이지에 그리면 페이지 수 자동 확장
       let stroke = strokesRef.current.get(strokeId);
       if (!stroke) {
-        stroke = { id: strokeId, layerId, penType: delta.penType, color: delta.color, opacity: delta.opacity, segs: [] };
+        stroke = { id: strokeId, layerId, penType: delta.penType, color: delta.color, opacity: delta.opacity, segs: [], page };
         strokesRef.current.set(strokeId, stroke);
       }
       stroke.segs.push({ from: delta.from, to: delta.to, width: delta.width });
-      const ctx = getLayerCanvas(stroke.layerId).getContext('2d');
-      if (ctx) renderInkSegment(ctx, delta);
-      composite();
+      // 다른 페이지의 획은 모델에만 쌓고(위에서 저장됨), 화면엔 그 페이지로 넘어갈 때 렌더된다.
+      if (pageOf(stroke) === pageIndexRef.current) {
+        const ctx = getLayerCanvas(stroke.layerId).getContext('2d');
+        if (ctx) renderInkSegment(ctx, delta);
+        composite();
+      }
     } else if (delta.type === 'erase_strokes') {
       const affectedLayers = new Set<string>();
       for (const id of delta.strokeIds) {
@@ -218,8 +255,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     const threshold = Math.max(pen.baseWidth, 12);
     const hit: string[] = [];
     for (const stroke of strokesRef.current.values()) {
-      // 활성 레이어의 실제 잉크만 대상 (영역 지우개 자국은 히트 제외)
+      // 활성 레이어의 실제 잉크만 대상 (영역 지우개 자국은 히트 제외) + 현재 페이지만
       if (stroke.layerId !== activeLayerRef.current || stroke.penType === 'eraser') continue;
+      if (pageOf(stroke) !== pageIndexRef.current) continue;
       for (const s of stroke.segs) {
         if (distancePointToSegment(p, s.from, s.to) <= threshold + s.width / 2) {
           hit.push(stroke.id);
@@ -244,7 +282,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     previewRef.current = null;
     affected.forEach(rebuildLayer); composite();
     if (removeIds.length) onDelta?.({ type: 'erase_strokes', strokeIds: removeIds });
-    for (const st of addStrokes) for (const s of st.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: st.penType, color: st.color, opacity: st.opacity, strokeId: st.id, layerId: st.layerId });
+    for (const st of addStrokes) for (const s of st.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: st.penType, color: st.color, opacity: st.opacity, strokeId: st.id, layerId: st.layerId, page: st.page });
   };
 
   const undo = () => {
@@ -292,9 +330,15 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     undo,
     redo,
     // P1: 주어진 시각(초) 근처에 그린 획들의 영역을 잠깐 하이라이트. 맞은 획 수 반환.
+    // 여러 페이지: 전 페이지에서 찾고, 매칭이 다른 페이지에 있으면 그 페이지로 점프한다.
     highlightByTime: (sec: number, windowSec = 6) => {
-      const matches = [...strokesRef.current.values()].filter((st) => st.t !== undefined && Math.abs((st.t as number) - sec) <= windowSec);
-      if (!matches.length) { setHighlightBox(null); return 0; }
+      const all = [...strokesRef.current.values()].filter((st) => st.t !== undefined && Math.abs((st.t as number) - sec) <= windowSec);
+      if (!all.length) { setHighlightBox(null); return 0; }
+      const targetPage = all.some((st) => pageOf(st) === pageIndexRef.current)
+        ? pageIndexRef.current
+        : pageOf(all[0]);
+      if (targetPage !== pageIndexRef.current) goToPage(targetPage);
+      const matches = all.filter((st) => pageOf(st) === targetPage);
       const box = boxOfStrokes(matches);
       if (box) {
         setHighlightBox(box);
@@ -308,6 +352,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       layerCanvasesRef.current.forEach((c) => c.getContext('2d')?.clearRect(0, 0, c.width, c.height));
       undoStackRef.current = []; redoStackRef.current = []; notifyHistory();
       applySelection(null);
+      pageIndexRef.current = 0; pageCountRef.current = 1; setPageIndex(0); setPageCount(1);
       composite();
     },
     exportPng: () => canvasRef.current?.toDataURL('image/png') ?? null,
@@ -319,16 +364,21 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
         segs: st.segs.map((s) => ({ from: { ...s.from }, to: { ...s.to }, width: s.width })),
       })),
     // 저장된 스트로크로 캔버스 복원: 초기화 → 레이어 보장 → 모델 주입 → 재렌더.
+    // 페이지 수는 저장된 획의 최대 page로 복원한다(빈 트레일링 페이지는 v1에선 비영속).
     loadStrokes: (strokes: InkStroke[]) => {
       strokesRef.current.clear();
       layerCanvasesRef.current.forEach((c) => c.getContext('2d')?.clearRect(0, 0, c.width, c.height));
+      let maxPage = 0;
       for (const st of strokes) {
         ensureLayer(st.layerId);
+        if (pageOf(st) > maxPage) maxPage = pageOf(st);
         strokesRef.current.set(st.id, {
           ...st,
           segs: st.segs.map((s) => ({ from: { ...s.from }, to: { ...s.to }, width: s.width })),
         });
       }
+      pageIndexRef.current = 0; setPageIndex(0);
+      pageCountRef.current = maxPage + 1; setPageCount(maxPage + 1);
       layersRef.current.forEach((l) => rebuildLayer(l.id));
       undoStackRef.current = []; redoStackRef.current = []; notifyHistory();
       applySelection(null);
@@ -396,7 +446,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // ===== 올가미 선택/변형 =====
   const emitStrokeSegs = (st: InkStroke) => {
     for (const s of st.segs) {
-      onDelta?.({ from: s.from, to: s.to, width: s.width, penType: st.penType, color: st.color, opacity: st.opacity, strokeId: st.id, layerId: st.layerId });
+      onDelta?.({ from: s.from, to: s.to, width: s.width, penType: st.penType, color: st.color, opacity: st.opacity, strokeId: st.id, layerId: st.layerId, page: st.page });
     }
   };
   const boxOfStrokes = (strokes: InkStroke[]): SelBox | null => {
@@ -501,6 +551,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
           let hitT: number | undefined;
           for (const st of strokesRef.current.values()) {
             if (st.layerId !== activeLayerRef.current || st.t === undefined || st.penType === 'eraser') continue;
+            if (pageOf(st) !== pageIndexRef.current) continue;
             if (st.segs.some((s) => distancePointToSegment(tap, s.from, s.to) <= thr + s.width / 2)) hitT = st.t; // 위 획 우선
           }
           if (hitT !== undefined) { onStrokeTap(hitT); }
@@ -510,6 +561,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       const ids: string[] = [];
       for (const st of strokesRef.current.values()) {
         if (st.layerId !== activeLayerRef.current) continue;
+        if (pageOf(st) !== pageIndexRef.current) continue; // 올가미는 현재 페이지 획만
         const pts = strokePoints(st); if (!pts.length) continue;
         let inside = 0;
         for (const p of pts) if (pointInPolygon(p, poly)) inside++;
@@ -540,13 +592,13 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     const w = widthForPressure(pen, 0.5);
     const segs = [];
     for (let i = 1; i < pts.length; i++) segs.push({ from: { ...pts[i - 1] }, to: { ...pts[i] }, width: w });
-    return { id: genId(), layerId: activeLayerRef.current, penType: pen.type, color: pen.color, opacity: pen.opacity, segs };
+    return { id: genId(), layerId: activeLayerRef.current, penType: pen.type, color: pen.color, opacity: pen.opacity, segs, page: pageIndexRef.current };
   };
   const commitGestureStroke = (stroke: InkStroke) => {
     const t = strokeTime?.(); if (t !== undefined) stroke.t = t;
     strokesRef.current.set(stroke.id, stroke);
     rebuildLayer(stroke.layerId); composite();
-    for (const s of stroke.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: stroke.penType, color: stroke.color, opacity: stroke.opacity, strokeId: stroke.id, layerId: stroke.layerId });
+    for (const s of stroke.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: stroke.penType, color: stroke.color, opacity: stroke.opacity, strokeId: stroke.id, layerId: stroke.layerId, page: stroke.page });
     if (t !== undefined) onDelta?.({ type: 'stroke_time', strokeId: stroke.id, t }); // 원격에도 시각 전파
     pushUndo({ removed: [], added: [deepStroke(stroke)] });
   };
@@ -606,6 +658,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       opacity: pen.opacity,
       strokeId: currentStrokeIdRef.current ?? genId(),
       layerId: activeLayerRef.current,
+      page: pageIndexRef.current,
     };
     applyDelta(seg);      // 로컬도 원격과 같은 경로로 모델에 반영
     lastRef.current = to;
@@ -730,8 +783,21 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       </div>
       </div>
 
-      {/* 확대/축소 컨트롤 (100% = 화면 맞춤). Ctrl/⌘+휠로도 조절. */}
-      <div className="absolute bottom-3 right-3 z-30 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none">
+      {/* 페이지 네비 (삼성노트 #13): ◀ n/N ▶ + 새 페이지. 좌하단(줌은 우하단, 전사 핸들은 중앙).
+          전사 패널이 열리면 controlsBottomInset만큼 위로 올라와 가려지지 않는다. */}
+      <div style={{ bottom: 12 + controlsBottomInset }} className="absolute left-3 z-30 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none transition-[bottom]">
+        <button onClick={() => goToPage(pageIndex - 1)} title="이전 페이지" disabled={pageIndex <= 0}
+          className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
+        <span className="text-xs font-bold text-slate-700 tabular-nums px-0.5">{pageIndex + 1}/{pageCount}</span>
+        <button onClick={() => goToPage(pageIndex + 1)} title="다음 페이지" disabled={pageIndex >= pageCount - 1}
+          className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button>
+        <div className="w-px h-4 bg-slate-200 mx-0.5" />
+        <button onClick={addPage} title="새 페이지 추가"
+          className="p-1.5 rounded-full hover:bg-blue-50 text-blue-600"><FilePlus2 className="w-4 h-4" /></button>
+      </div>
+
+      {/* 확대/축소 컨트롤 (100% = 화면 맞춤). Ctrl/⌘+휠로도 조절. 전사 패널 열림 시 위로. */}
+      <div style={{ bottom: 12 + controlsBottomInset }} className="absolute right-3 z-30 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none transition-[bottom]">
         <button onClick={() => setZoomClamped((z) => z / 1.25)} title="축소" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={zoom <= ZOOM_MIN}><Minus className="w-4 h-4" /></button>
         <button onClick={() => setZoomClamped(1)} title="100%로 맞춤" className="text-xs font-bold text-slate-700 w-12 tabular-nums hover:text-blue-600">{Math.round(zoom * 100)}%</button>
         <button onClick={() => setZoomClamped((z) => z * 1.25)} title="확대" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={zoom >= ZOOM_MAX}><Plus className="w-4 h-4" /></button>

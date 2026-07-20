@@ -29,6 +29,7 @@ export interface InkSegment {
   opacity: number;
   strokeId?: string;
   layerId?: string;
+  page?: number; // 여러 페이지 노트: 세그먼트가 속한 페이지(없으면 0 — 구버전 호환)
 }
 
 // 획 지우기(스트로크 삭제) 연산. CRDT에는 append-only 이벤트로 쌓여
@@ -64,6 +65,7 @@ export interface InkStroke {
   opacity: number;
   segs: { from: { x: number; y: number }; to: { x: number; y: number }; width: number }[];
   t?: number; // 녹음 중 그렸다면 녹음 시작부터의 경과 초(획↔전사 싱크용)
+  page?: number; // 획이 속한 페이지(없으면 0 — 기존 단일 페이지 노트와 완전 호환)
 }
 
 // #4 자(직선): 끝점을 45° 배수에 가까우면 스냅한다(반듯한 선·수직·수평·대각).

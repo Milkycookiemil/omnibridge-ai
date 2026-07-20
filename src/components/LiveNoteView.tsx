@@ -526,6 +526,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       backgroundStyle={backgroundStyle}
       onDelta={handleLocalDelta}
       showLayers={deviceMode !== 'laptop'} // 노트북 모드의 작은 미러 뷰에선 패널 숨김
+      controlsBottomInset={transcriptOpen ? 248 : 0} // 전사 패널(248px)이 페이지·줌 컨트롤을 가리지 않게
       className="flex-1"
     />
   );
