@@ -9,13 +9,14 @@ export interface TranscriptLine {
   text: string;
 }
 
-export type TranscribeStatus = 'idle' | 'loading' | 'listening' | 'transcribing';
+export type TranscribeStatus = 'idle' | 'loading' | 'listening' | 'transcribing' | 'error';
 
 const WINDOW_MS = 5000;
 
 export function useTranscription() {
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [status, setStatus] = useState<TranscribeStatus>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [modelProgress, setModelProgress] = useState(0);
 
   const ctxRef = useRef<AudioContext | null>(null);
@@ -67,14 +68,19 @@ export function useTranscription() {
     startTimeRef.current = Date.now();
     chunksRef.current = [];
 
-    // 모델 미리 로드 (진행률 표시)
+    // 모델 미리 로드 (진행률 표시). 실패하면 '청취 중'으로 넘어가지 말고 에러를 노출한다.
+    // (예전엔 에러를 삼키고 listening으로 진행 → 매 flush가 throw → "청취 중인데 라인 0"으로 오인)
     setStatus('loading');
+    setErrorMsg(null);
     try {
       await getTranscriber((p: ModelProgress) => {
         if (typeof p.progress === 'number') setModelProgress(Math.round(p.progress));
       });
     } catch (e) {
       console.error('Whisper 모델 로드 실패', e);
+      setErrorMsg('전사 모델을 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도해 주세요.');
+      setStatus('error');
+      return; // 모델 없이 캡처를 시작해봐야 매번 실패하므로 중단
     }
 
     const ctx = new AudioContext();
@@ -119,5 +125,5 @@ export function useTranscription() {
   // 저장된 전사를 노트 열 때 복원(획↔전사 싱크가 재방문·크로스디바이스에서도 동작).
   const restore = useCallback((saved: TranscriptLine[]) => setLines(saved ?? []), []);
 
-  return { lines, status, modelProgress, start, stop, reset, restore };
+  return { lines, status, errorMsg, modelProgress, start, stop, reset, restore };
 }

@@ -10,6 +10,7 @@ import type { TranscriptLine, TranscribeStatus } from '../hooks/useTranscription
 interface TranscriptPanelProps {
   lines: TranscriptLine[];
   status: TranscribeStatus;
+  errorMsg?: string | null;
   modelProgress: number;
   open: boolean;
   onToggle: () => void;
@@ -20,7 +21,7 @@ interface TranscriptPanelProps {
 
 const PANEL_H = 248; // px
 
-export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, summarySlot, onLineClick, highlightIndex }: TranscriptPanelProps) {
+export function TranscriptPanel({ lines, status, errorMsg, modelProgress, open, onToggle, summarySlot, onLineClick, highlightIndex }: TranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,6 +43,8 @@ export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, 
         return <span className="flex items-center gap-1 text-violet-600"><Loader2 className="w-3 h-3 animate-spin" /> 전사 중…</span>;
       case 'listening':
         return <span className="flex items-center gap-1 text-emerald-600"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> 청취 중</span>;
+      case 'error':
+        return <span className="text-rose-600 font-bold">전사 오류</span>;
       default:
         return <span className="text-slate-400">대기</span>;
     }
@@ -86,9 +89,10 @@ export function TranscriptPanel({ lines, status, modelProgress, open, onToggle, 
               </div>
               <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
                 {lines.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-slate-400 text-sm text-center px-4">
-                    {status === 'idle' ? '녹음을 시작하면 음성이 실시간으로 전사됩니다.'
-                      : status === 'loading' ? '최초 1회 온디바이스 모델을 준비 중입니다…'
+                  <div className={cn("h-full flex items-center justify-center text-sm text-center px-4", status === 'error' ? "text-rose-600" : "text-slate-400")}>
+                    {status === 'error' ? (errorMsg || '전사 모델을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.')
+                      : status === 'idle' ? '녹음을 시작하면 음성이 실시간으로 전사됩니다.'
+                      : status === 'loading' ? `최초 1회 온디바이스 모델(약 145MB)을 내려받는 중입니다… ${modelProgress > 0 ? modelProgress + '%' : ''}`
                       : '음성을 듣고 있습니다…'}
                   </div>
                 ) : (

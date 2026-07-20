@@ -21,6 +21,9 @@ export async function getTranscriber(onProgress?: (p: ModelProgress) => void): P
         progress_callback: onProgress as any,
       });
     })();
+    // 실패(네트워크 등)하면 싱글톤을 비워 다음 녹음에서 재시도 가능하게 한다.
+    // (안 그러면 rejected promise가 캐시돼 페이지 새로고침 전까지 영구 실패)
+    transcriberPromise.catch(() => { transcriberPromise = null; });
   }
   return transcriberPromise;
 }

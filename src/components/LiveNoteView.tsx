@@ -606,6 +606,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       <TranscriptPanel
         lines={transcription.lines}
         status={transcription.status}
+        errorMsg={transcription.errorMsg}
         modelProgress={transcription.modelProgress}
         open={transcriptOpen}
         onToggle={() => setTranscriptOpen(!transcriptOpen)}

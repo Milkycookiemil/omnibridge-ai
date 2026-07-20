@@ -51,6 +51,7 @@ alter table public.notes add column if not exists transcript jsonb;
 - **수정**: `transcription.ts`에서 `pipeline(..., { dtype: 'fp32' })` 명시. 실제 앱 코드 경로(`getTranscriber`→`transcribePcm16k`)로 재검증 통과. tsc 0에러·build 통과.
 - **트레이드오프**: fp32라 최초 다운로드 ~145MB(encoder 31MB+decoder 113MB, 이후 캐시). 이 transformers 버전에선 다국어(한국어) 되는 유일한 조합. 크기 줄이려면 추후 transformers/ORT 업그레이드 후 q8 재시도.
 - **남은 확인**: 실제 마이크로 한국어 정확도(whisper-tiny 한계)·5초 윈도 지연은 실사용 확인 필요.
+- **후속 수정(조용한 실패 노출)**: 모델 로드 실패를 삼키고 '청취 중'으로 진행하던 것 → 실패 시 status `'error'`+안내 메시지 노출하고 캡처 시작 안 함(`useTranscription`). rejected 싱글톤이 재시도를 영구 차단하던 것도 수정(`transcription.ts`, 실패 시 `transcriberPromise=null`). TranscriptPanel에 '전사 오류' 뱃지+메시지. → "청취 중인데 라인 0"이 이제 명확한 에러로 보임. (증상 신고자: 실제로는 옛 캐시 번들 로드 실패였을 가능성 → 강력 새로고침 필요)
 
 ### ⚠️ 아직 실브라우저 미검증(마이크 필요 등)
 - **녹음→전사→라인클릭/획탭 싱크**: 실제 마이크 있는 브라우저에서 확인 필요(프리뷰 팬 마이크 차단).
