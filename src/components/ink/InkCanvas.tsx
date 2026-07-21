@@ -50,6 +50,7 @@ interface InkCanvasProps {
   strokeTime?: () => number | undefined; // P1 녹음 중이면 획에 찍을 경과 초, 아니면 undefined
   onStrokeTap?: (t: number) => void;     // P1 역방향: 선택 모드에서 시각 있는 획 탭 → 전사로 점프
   controlsBottomInset?: number;          // 하단 도킹 패널(전사)이 열렸을 때 페이지·줌 컨트롤을 위로 올리는 px
+  onStructureChange?: () => void;        // 페이지 삭제/순서변경 등 저장이 필요한 구조 변경(디바운스 저장 트리거)
 }
 
 type SelBox = { x: number; y: number; w: number; h: number };
@@ -60,7 +61,7 @@ type DragState =
   | { mode: 'scale'; anchor: { x: number; y: number }; baseBox: SelBox };
 
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
-  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap, controlsBottomInset = 0 },
+  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap, controlsBottomInset = 0, onStructureChange },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -104,28 +105,69 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // 빈 페이지는 획이 없으면 저장할 게 없어 재방문 시 사라질 수 있다(내용 유실 0 — v1 한계).
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCount, setPageCount] = useState(1);
+  const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const pageIndexRef = useRef(0);
   const pageCountRef = useRef(1);
+  const scrollViewRef = useRef<HTMLDivElement>(null); // 확대 스크롤 뷰포트(스크롤 페이지 이동 감지용)
+  const flipCooldownRef = useRef(0);                  // 관성 스크롤로 여러 장 넘어가지 않게 쿨다운
   const pageOf = (st: { page?: number }) => st.page ?? 0;
   // 원격/로드 획이 현재 페이지 수 밖을 가리키면 페이지 수를 늘린다(기기 간 페이지 자동 전파).
   const ensurePageCount = (n: number) => {
     if (n > pageCountRef.current) { pageCountRef.current = n; setPageCount(n); }
+  };
+  const clearInteractions = () => {
+    applySelection(null);
+    previewRef.current = null; dragRef.current = null; lassoRef.current = null; gestureRef.current = null;
+    drawingRef.current = false; lastRef.current = null; currentStrokeIdRef.current = null;
   };
   const goToPage = (i: number) => {
     const clamped = Math.max(0, Math.min(pageCountRef.current - 1, i));
     if (clamped === pageIndexRef.current) return;
     pageIndexRef.current = clamped;
     setPageIndex(clamped);
-    // 페이지가 바뀌면 선택·진행 중 제스처를 정리하고 현재 페이지 획만 다시 그린다.
-    applySelection(null);
-    previewRef.current = null; dragRef.current = null; lassoRef.current = null; gestureRef.current = null;
-    drawingRef.current = false; lastRef.current = null; currentStrokeIdRef.current = null;
+    clearInteractions();
+    if (scrollViewRef.current) scrollViewRef.current.scrollTop = 0; // 새 페이지는 위에서 시작
     layersRef.current.forEach((l) => rebuildLayer(l.id));
     composite();
   };
   const addPage = () => {
     ensurePageCount(pageCountRef.current + 1);
     goToPage(pageCountRef.current - 1);
+  };
+  // 현재(또는 지정) 페이지 삭제: 그 페이지 획은 erase로 제거(동기화)하고, 뒤 페이지는 한 칸 당긴다.
+  const deletePage = (p: number) => {
+    if (pageCountRef.current <= 1) return; // 최소 1페이지 유지
+    setPageMenuOpen(false);
+    const removeIds: string[] = [];
+    for (const st of strokesRef.current.values()) if (pageOf(st) === p) removeIds.push(st.id);
+    // 뒤 페이지 인덱스 -1 (구조 재색인)
+    for (const st of strokesRef.current.values()) if (pageOf(st) > p) st.page = pageOf(st) - 1;
+    removeIds.forEach((id) => strokesRef.current.delete(id));
+    pageCountRef.current -= 1; setPageCount(pageCountRef.current);
+    let ni = pageIndexRef.current;
+    if (ni > p || ni >= pageCountRef.current) ni = Math.max(0, Math.min(ni, pageCountRef.current - 1));
+    if (pageIndexRef.current === p) ni = Math.min(p, pageCountRef.current - 1);
+    pageIndexRef.current = ni; setPageIndex(ni);
+    clearInteractions();
+    layersRef.current.forEach((l) => rebuildLayer(l.id)); composite();
+    // 삭제 획은 원격에도 전파(+저장 트리거). 획 없는 빈 페이지 삭제여도 재색인 저장 필요.
+    if (removeIds.length) onDelta?.({ type: 'erase_strokes', strokeIds: removeIds });
+    onStructureChange?.();
+  };
+  // 페이지 순서 변경: p와 p+dir의 획 page를 맞바꾼다(보고 있던 페이지를 따라간다).
+  const movePage = (p: number, dir: -1 | 1) => {
+    const q = p + dir;
+    if (q < 0 || q >= pageCountRef.current) return;
+    for (const st of strokesRef.current.values()) {
+      if (pageOf(st) === p) st.page = q;
+      else if (pageOf(st) === q) st.page = p;
+    }
+    let ni = pageIndexRef.current;
+    if (ni === p) ni = q; else if (ni === q) ni = p;
+    pageIndexRef.current = ni; setPageIndex(ni);
+    clearInteractions();
+    layersRef.current.forEach((l) => rebuildLayer(l.id)); composite();
+    onStructureChange?.(); // 재색인 영속(순서변경은 실시간 델타 없이 노트 저장으로 전파)
   };
 
   // P1 전사→획 하이라이트 박스(잠깐 반짝이고 사라짐)
@@ -391,9 +433,10 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const aspect = width / height;
+    const PAD = 24; // 뷰포트 래퍼 p-6(24px)과 일치 — fit에서 스크롤 여지 0(휠=즉시 페이지 플립)
     const measure = () => {
-      const cw = el.clientWidth, ch = el.clientHeight;
-      if (!cw || !ch) return;
+      const cw = el.clientWidth - PAD * 2, ch = el.clientHeight - PAD * 2;
+      if (cw <= 0 || ch <= 0) return;
       let pw = cw, ph = cw / aspect;
       if (ph > ch) { ph = ch; pw = ch * aspect; } // 세로가 넘치면 높이에 맞춤
       setPage({ w: pw, h: ph, offX: (cw - pw) / 2, offY: (ch - ph) / 2 });
@@ -706,11 +749,27 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }
   };
 
-  // Ctrl/⌘ + 휠 → 확대/축소 (일반 휠은 스크롤 그대로).
+  // 휠: Ctrl/⌘=확대축소 / 확대 상태에선 페이지 내부 스크롤 / 경계 도달 시 이전·다음 페이지로 이동.
   const handleWheel = (e: React.WheelEvent) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    e.preventDefault();
-    setZoomClamped((z) => z * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      setZoomClamped((z) => z * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+      return;
+    }
+    const el = scrollViewRef.current;
+    if (!el) return;
+    const dir = e.deltaY > 0 ? 1 : -1;
+    const atTop = el.scrollTop <= 0;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+    // 확대해서 아직 스크롤 여지가 있으면 페이지 내부 스크롤을 그대로 둔다.
+    if ((dir > 0 && !atBottom) || (dir < 0 && !atTop)) return;
+    const now = Date.now();
+    if (now < flipCooldownRef.current) { e.preventDefault(); return; } // 관성 다중 플립 방지
+    if (dir > 0 && pageIndexRef.current < pageCountRef.current - 1) {
+      flipCooldownRef.current = now + 450; goToPage(pageIndexRef.current + 1); e.preventDefault();
+    } else if (dir < 0 && pageIndexRef.current > 0) {
+      flipCooldownRef.current = now + 450; goToPage(pageIndexRef.current - 1); e.preventDefault();
+    }
   };
 
   return (
@@ -718,8 +777,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       ref={containerRef}
       className={`relative overflow-hidden bg-slate-100 ${className ?? ''}`}
     >
-      {/* 확대 시 스크롤되는 뷰포트. 페이지가 작으면 가운데 정렬, 크면 스크롤. */}
-      <div className="absolute inset-0 overflow-auto" onWheel={handleWheel}>
+      {/* 확대 시 스크롤되는 뷰포트. 페이지가 작으면 가운데 정렬, 크면 스크롤. 경계에서 휠=페이지 이동. */}
+      <div ref={scrollViewRef} className="absolute inset-0 overflow-auto" onWheel={handleWheel}>
       <div className="min-w-full min-h-full flex items-center justify-center p-6">
       {/* 고정 비율 페이지: 화면맞춤(100%)에 zoom 배율을 곱해 크기 결정. 찌그러짐 0. */}
       <div
@@ -783,17 +842,40 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       </div>
       </div>
 
-      {/* 페이지 네비 (삼성노트 #13): ◀ n/N ▶ + 새 페이지. 좌하단(줌은 우하단, 전사 핸들은 중앙).
-          전사 패널이 열리면 controlsBottomInset만큼 위로 올라와 가려지지 않는다. */}
-      <div style={{ bottom: 12 + controlsBottomInset }} className="absolute left-3 z-30 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none transition-[bottom]">
+      {/* 페이지 네비 (삼성노트 #13): ◀ n/N ▶ + 새 페이지 + 페이지 메뉴(삭제·순서변경). 좌하단.
+          전사 패널이 열리면 controlsBottomInset만큼 위로 올라와 가려지지 않는다.
+          휠을 페이지 경계에서 굴리면 이전/다음 페이지로도 이동한다. */}
+      {pageMenuOpen && <div className="fixed inset-0 z-30" onClick={() => setPageMenuOpen(false)} />}
+      <div style={{ bottom: 12 + controlsBottomInset }} className="absolute left-3 z-40 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none transition-[bottom]">
         <button onClick={() => goToPage(pageIndex - 1)} title="이전 페이지" disabled={pageIndex <= 0}
           className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
-        <span className="text-xs font-bold text-slate-700 tabular-nums px-0.5">{pageIndex + 1}/{pageCount}</span>
+        <button onClick={() => setPageMenuOpen((o) => !o)} title="페이지 관리(삭제·순서변경)"
+          className="text-xs font-bold text-slate-700 tabular-nums px-1 rounded hover:bg-slate-100">{pageIndex + 1}/{pageCount}</button>
         <button onClick={() => goToPage(pageIndex + 1)} title="다음 페이지" disabled={pageIndex >= pageCount - 1}
           className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button>
         <div className="w-px h-4 bg-slate-200 mx-0.5" />
         <button onClick={addPage} title="새 페이지 추가"
           className="p-1.5 rounded-full hover:bg-blue-50 text-blue-600"><FilePlus2 className="w-4 h-4" /></button>
+
+        {/* 페이지 관리 팝오버 (pill 위로) */}
+        {pageMenuOpen && (
+          <div className="absolute bottom-full left-0 mb-2 w-44 bg-white rounded-xl border border-slate-200 shadow-xl p-1.5 z-50">
+            <div className="text-[11px] font-bold text-slate-400 px-2 py-1">{pageIndex + 1}페이지</div>
+            <button onClick={() => movePage(pageIndex, -1)} disabled={pageIndex <= 0}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent">
+              <ChevronLeft className="w-4 h-4" /> 앞으로 이동
+            </button>
+            <button onClick={() => movePage(pageIndex, 1)} disabled={pageIndex >= pageCount - 1}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent">
+              <ChevronRight className="w-4 h-4" /> 뒤로 이동
+            </button>
+            <div className="h-px bg-slate-100 my-1" />
+            <button onClick={() => deletePage(pageIndex)} disabled={pageCount <= 1}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-rose-600 hover:bg-rose-50 disabled:opacity-40 disabled:hover:bg-transparent">
+              <Trash2 className="w-4 h-4" /> 이 페이지 삭제
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 확대/축소 컨트롤 (100% = 화면 맞춤). Ctrl/⌘+휠로도 조절. 전사 패널 열림 시 위로. */}

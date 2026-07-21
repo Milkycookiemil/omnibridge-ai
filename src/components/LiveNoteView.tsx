@@ -525,6 +525,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       onHistoryChange={({ canUndo, canRedo }) => { setCanUndo(canUndo); setCanRedo(canRedo); }}
       backgroundStyle={backgroundStyle}
       onDelta={handleLocalDelta}
+      onStructureChange={scheduleSave} // 페이지 삭제·순서변경 시 저장(순서변경은 실시간 델타 없음)
       showLayers={deviceMode !== 'laptop'} // 노트북 모드의 작은 미러 뷰에선 패널 숨김
       controlsBottomInset={transcriptOpen ? 248 : 0} // 전사 패널(248px)이 페이지·줌 컨트롤을 가리지 않게
       className="flex-1"
