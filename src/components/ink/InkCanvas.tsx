@@ -260,6 +260,14 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   const currentStrokeIdRef = useRef<string | null>(null);
   const gestureRef = useRef<{ x: number; y: number }[] | null>(null); // #4 자/도형 제스처 점들
 
+  // --- 팜리젝션(스타일러스 우선) ---
+  // 펜(스타일러스)이 한 번이라도 감지되면 그 뒤 손가락(touch)은 그리지 않고 스크롤로 넘긴다
+  // (손바닥·손가락 오작동 방지). 펜을 안 쓰는 사용자는 처음부터 손가락으로 계속 그릴 수 있다.
+  const [penMode, setPenMode] = useState(false);
+  const penModeRef = useRef(false);
+  const markPen = () => { if (!penModeRef.current) { penModeRef.current = true; setPenMode(true); } };
+  const isRejectedTouch = (e: React.PointerEvent) => e.pointerType === 'touch' && penModeRef.current;
+
   // --- 레이어 오프스크린 캔버스 ---
   const getLayerCanvas = (layerId: string): HTMLCanvasElement => {
     let c = layerCanvasesRef.current.get(layerId);
@@ -800,6 +808,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'pen') markPen();
+    // 팜리젝션: 펜 감지 후 손가락은 그리지 않는다(캡처도 안 함 → touch-action대로 브라우저가 스크롤).
+    if (isRejectedTouch(e)) return;
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
     // 연속 스크롤: 다른 페이지 캔버스에 펜을 대면 그 페이지를 즉시 활성으로(그대로 그리기 시작).
     if (scrollModeRef.current) {
@@ -819,6 +830,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isRejectedTouch(e)) return; // 팜리젝션: 손가락 이동은 무시(스크롤로 넘어감)
     if (selectMode) { if (dragRef.current) handleSelectMove(toCanvasCoords(e)); return; }
     if (!drawingRef.current) return;
     const to = toCanvasCoords(e);
@@ -850,6 +862,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isRejectedTouch(e)) return; // 팜리젝션: 손가락은 그리기 상태가 없으므로 종료 처리 안 함
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     if (selectMode) { handleSelectUp(); return; }
 
@@ -995,7 +1008,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
                   width={width}
                   height={height}
                   {...canvasHandlers}
-                  className="absolute inset-0 w-full h-full touch-none z-10"
+                  className={cn('absolute inset-0 w-full h-full z-10', penMode ? '[touch-action:pan-x_pan-y]' : 'touch-none')}
                   style={canvasCursor}
                 />
                 {/* 페이지 번호 칩 */}

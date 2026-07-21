@@ -49,6 +49,11 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const textLayerRef = useRef<HTMLDivElement>(null);
   // 드로잉 진행 여부는 ref로 관리 — 합성/연속 pointer 이벤트에서 state 지연 없이 즉시 반영
   const isDrawingRef = useRef(false);
+  // 팜리젝션(스타일러스 우선): 펜 감지 후 손가락(touch)은 그리지 않고 스크롤로 넘긴다.
+  const [penMode, setPenMode] = useState(false);
+  const penModeRef = useRef(false);
+  const markPen = () => { if (!penModeRef.current) { penModeRef.current = true; setPenMode(true); } };
+  const isRejectedTouch = (e: React.PointerEvent) => e.pointerType === 'touch' && penModeRef.current;
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [matches, setMatches] = useState<{textIndex: number, rect: any}[]>([]);
   const [hasText, setHasText] = useState<boolean | null>(null);
@@ -380,6 +385,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'pen') markPen();
+    if (isRejectedTouch(e)) return; // 팜리젝션: 손가락은 그리지 않고 스크롤(touch-action)로 넘김
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
     const ratio = getCoordinatesRatio(e);
     if (selectMode) { selectDown(ratio); return; }
@@ -395,6 +402,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isRejectedTouch(e)) return; // 팜리젝션
     if (selectMode) { if (selDragRef.current) selectMove(getCoordinatesRatio(e)); return; }
     if (!isDrawingRef.current) return;
     if (gestureRef.current) { gestureRef.current.push(getCoordinatesRatio(e)); drawGesturePreviewPdf(); return; }
@@ -419,6 +427,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const stopDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isRejectedTouch(e)) return; // 팜리젝션
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     if (selectMode) { selectUp(); return; }
     // #4 자/도형 제스처 확정
@@ -484,7 +493,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
         onPointerMove={draw}
         onPointerUp={stopDraw}
         onPointerLeave={stopDraw}
-        className="absolute inset-0 w-full h-full z-20 touch-none"
+        className={cn('absolute inset-0 w-full h-full z-20', penMode ? '[touch-action:pan-x_pan-y]' : 'touch-none')}
         style={{ cursor: selectMode ? 'crosshair' : cursorForPen(pen) }}
       />
 
