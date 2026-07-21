@@ -19,6 +19,7 @@ import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
 import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteTypedText, saveNoteTranscript } from '../lib/notesStore';
 import { downloadPdf, takePdfFile } from '../lib/pdfStore';
+import { pageDims } from '../lib/pageSizes';
 import { buildRecordingStream, NO_SYSTEM_AUDIO } from '../lib/audioCapture';
 import { RecordSourcePopover } from './RecordSourcePopover';
 import type { PdfPageStrokes } from '../lib/pdfInk';
@@ -37,6 +38,11 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const fileDetails = navContext?.file;
   // 저장된 노트를 열었을 때의 식별자. 없으면(빠른 녹음/PDF/캡쳐 등) 비영속.
   const noteId: string | undefined = navContext?.noteId;
+
+  // 빈 노트 페이지 크기(획 좌표 공간 = 이 w×h). 새 노트는 navContext에서 즉시, 재열기는 getNote로.
+  // pageSize 없는 구노트는 기존 1:1(800×800) 유지.
+  const [noteDims, setNoteDims] = useState<{ w: number; h: number }>(() =>
+    navContext?.pageSize ? pageDims(navContext.pageSize) : { w: 800, h: 800 });
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   // PDF 노트: 저장된 페이지별 필기(복원용) + 최신값 ref(언마운트 flush용) + 디바운스 타이머
@@ -446,6 +452,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     if (noteId) {
       getNote(noteId).then((note) => {
         if (cancelled || !note) return;
+        // 저장된 페이지 크기로 캔버스 크기를 먼저 맞춘 뒤 획을 복원(획 좌표가 그 공간 기준).
+        setNoteDims(note.pageSize ? pageDims(note.pageSize) : { w: 800, h: 800 });
         if (inkRef.current) inkRef.current.loadStrokes(note.strokes);
       });
     }
@@ -517,6 +525,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     <InkCanvas
       ref={inkRef}
       pen={activePen}
+      width={noteDims.w}
+      height={noteDims.h}
       selectMode={selectMode}
       straightLine={straightLine}
       shapeMode={shapeMode}

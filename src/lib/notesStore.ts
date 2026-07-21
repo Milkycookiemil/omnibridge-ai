@@ -21,6 +21,7 @@ export interface NoteMeta {
   id: string;
   title: string;
   style: PaperStyle;
+  pageSize?: string; // 빈 노트 페이지 크기 id(예: 'a4-p'). 없으면 구노트=1:1(800×800). pageSizes.ts 참고.
   createdAt: number;
   updatedAt: number;
   thumbnail?: string; // 대시보드 카드용 축소 미리보기 (data URL)
@@ -112,11 +113,19 @@ interface NoteRow {
   transcript: unknown;
 }
 
+// 페이지 크기를 별도 마이그레이션 없이 동기화: style 텍스트 컬럼에 `style|pageSize`로 인코딩.
+// (pageSize 값엔 '|'가 없으므로 fromRow에서 안전하게 분리) 없으면 순수 style만 저장.
+const encodeStyle = (n: Note) => (n.pageSize ? `${n.style}|${n.pageSize}` : n.style);
+const decodeStyle = (raw: string): { style: PaperStyle; pageSize?: string } => {
+  const [style, pageSize] = (raw || '').split('|');
+  return { style: (style as PaperStyle) || 'blank', pageSize: pageSize || undefined };
+};
+
 const toRow = (n: Note, uid: string): NoteRow => ({
   id: n.id,
   user_id: uid,
   title: n.title,
-  style: n.style,
+  style: encodeStyle(n),
   strokes: n.strokes,
   thumbnail: n.thumbnail ?? null,
   created_at: n.createdAt,
@@ -132,7 +141,7 @@ const fromRow = (r: NoteRow): Note => ({
   id: r.id,
   user_id: r.user_id,
   title: r.title,
-  style: (r.style as PaperStyle) || 'blank',
+  ...decodeStyle(r.style),
   strokes: (r.strokes as InkStroke[]) ?? [],
   pdfPages: (r.pdf_pages as PdfPageStrokes) ?? undefined,
   typedText: r.typed_text ?? undefined,
@@ -281,12 +290,13 @@ export async function getNote(id: string): Promise<Note | undefined> {
   return run<Note | undefined>('readonly', (s) => s.get(id));
 }
 
-export async function createNote(style: PaperStyle, title?: string): Promise<Note> {
+export async function createNote(style: PaperStyle, title?: string, pageSize?: string): Promise<Note> {
   const now = Date.now();
   const note: Note = {
     id: genId(),
     title: title || `${STYLE_LABEL[style]} ${new Date(now).toLocaleDateString('ko-KR')}`,
     style,
+    pageSize,
     createdAt: now,
     updatedAt: now,
     strokes: [],

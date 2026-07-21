@@ -8,6 +8,8 @@ import { X, File, FilePlus, Sparkles, ChevronLeft } from 'lucide-react';
 import { ViewState } from '../types';
 import { createNote, deleteNote, type PaperStyle } from '../lib/notesStore';
 import { uploadPdf, isFileStoreReady, QuotaError, stashPdfFile } from '../lib/pdfStore';
+import { PAGE_RATIOS, makeSizeId, isSquare, pageDims, type Orientation } from '../lib/pageSizes';
+import { cn } from '../lib/utils';
 
 interface NewNoteModalProps {
   open: boolean;
@@ -19,6 +21,8 @@ export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
   const [selectedNoteType, setSelectedNoteType] = useState<'blank' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ratioId, setRatioId] = useState('a4');       // 페이지 비율(기본 A4)
+  const [orient, setOrient] = useState<Orientation>('p'); // 방향(기본 세로)
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 열릴 때마다 1단계로 초기화
@@ -26,6 +30,8 @@ export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
     if (open) {
       setSelectedNoteType(null);
       setError(null);
+      setRatioId('a4');
+      setOrient('p');
     }
   }, [open]);
 
@@ -61,11 +67,12 @@ export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
     onNavigate('live_note', { noteId: note.id, style: 'pdf', fileName: file.name, file });
   };
 
-  // 새 손필기 노트 생성 후 열기
+  // 새 손필기 노트 생성 후 열기 (선택한 페이지 크기 포함)
   const handleCreateNote = async (style: PaperStyle) => {
-    const note = await createNote(style);
+    const pageSize = makeSizeId(ratioId, isSquare(ratioId) ? 'p' : orient);
+    const note = await createNote(style, undefined, pageSize);
     onClose();
-    onNavigate('live_note', { noteId: note.id, style, title: note.title });
+    onNavigate('live_note', { noteId: note.id, style, title: note.title, pageSize });
   };
 
   return (
@@ -148,6 +155,44 @@ export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
                   >
                     <ChevronLeft className="w-4 h-4" /> 뒤로 가기
                   </button>
+
+                  {/* 페이지 크기: 방향(세로/가로) + 비율 + 미리보기 */}
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-slate-400">페이지 크기</span>
+                      {/* 방향 토글 (정사각은 방향 무의미 → 숨김) */}
+                      {!isSquare(ratioId) && (
+                        <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+                          {(['p', 'l'] as Orientation[]).map((o) => (
+                            <button key={o} onClick={() => setOrient(o)}
+                              className={cn('px-2.5 py-1 text-xs font-bold rounded-md transition-colors',
+                                orient === o ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                              {o === 'p' ? '세로' : '가로'}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {/* 선택 비율 미리보기(축소) */}
+                      {(() => {
+                        const d = pageDims(makeSizeId(ratioId, isSquare(ratioId) ? 'p' : orient));
+                        const box = 44; const w = d.w >= d.h ? box : Math.round(box * d.w / d.h); const h = d.h >= d.w ? box : Math.round(box * d.h / d.w);
+                        return <div className="shrink-0 w-12 h-12 flex items-center justify-center"><div className="border-2 border-slate-300 rounded bg-slate-50" style={{ width: w, height: h }} /></div>;
+                      })()}
+                      <div className="flex flex-wrap gap-1.5">
+                        {PAGE_RATIOS.map((r) => (
+                          <button key={r.id} onClick={() => setRatioId(r.id)}
+                            className={cn('px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-colors',
+                              ratioId === r.id ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50')}>
+                            {r.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-xs font-bold text-slate-400 mb-2">용지</div>
                   <div className="grid grid-cols-3 gap-3">
                     <button
                       onClick={() => handleCreateNote('blank')}
