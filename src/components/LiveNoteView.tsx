@@ -376,12 +376,11 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isQuickRecord]);
 
-  const handleModeSwitch = () => {
-    const newMode = aiMode === 'npu' ? 'cloud' : 'npu';
-    setAiMode(newMode);
-    if (newMode === 'cloud') {
-      showToastMsg('Cloud 부스트 모드는 전력 소모가 큽니다.');
-    }
+  // 세그먼트 컨트롤: 대상 모드로 전환. 이미 활성인 세그먼트 클릭은 no-op(토글 오작동 수정).
+  const setAiModeTo = (target: 'npu' | 'cloud') => {
+    if (target === aiMode) return;
+    setAiMode(target);
+    if (target === 'cloud') showToastMsg('클라우드 부스트 모드는 전력 소모가 큽니다.');
   };
 
   // --- 노트 자동 저장 (IndexedDB) ---
@@ -429,6 +428,21 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       void doSaveRef.current();
     };
+  }, []);
+
+  // 키보드 실행취소/다시실행 (노트북 모드 등). 입력 필드 포커스 중엔 가로채지 않는다.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); inkRef.current?.undo(); }
+      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); inkRef.current?.redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   // 로컬 잉크 델타(세그먼트/획 삭제) → 실시간 릴레이 + 노트 자동 저장 예약
@@ -608,16 +622,16 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     <div className="space-y-2.5">
       <div className="flex items-center bg-white border border-slate-200 p-1 rounded-full shadow-sm w-max mb-1">
         <button
-          onClick={() => handleModeSwitch()}
+          onClick={() => setAiModeTo('npu')}
           className={cn("px-2.5 py-1 text-[11px] font-bold rounded-full flex items-center gap-1 transition-all", aiMode === 'npu' ? "bg-slate-100 text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600")}
         >
           <Lock className="w-3 h-3" /> 온디바이스
         </button>
         <button
-          onClick={() => handleModeSwitch()}
+          onClick={() => setAiModeTo('cloud')}
           className={cn("px-2.5 py-1 text-[11px] font-bold rounded-full flex items-center gap-1 transition-all", aiMode === 'cloud' ? "bg-slate-100 text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600")}
         >
-          <Zap className="w-3 h-3 text-amber-500" /> Cloud
+          <Zap className="w-3 h-3 text-amber-500" /> 클라우드
         </button>
       </div>
 
