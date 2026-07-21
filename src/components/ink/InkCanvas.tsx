@@ -10,7 +10,8 @@
 // 동기화: 로컬 입력은 onDelta로 세그먼트(strokeId/layerId 포함)·erase_strokes 연산을 내보내고,
 // 원격/리플레이는 ref.applyDelta로 동일 경로를 타므로 미러링·유실0 리플레이가 그대로 유지된다.
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Copy, Trash2, Minus, Plus, ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react';
+import { Copy, Trash2, Minus, Plus, ChevronLeft, ChevronRight, FilePlus2, X } from 'lucide-react';
+import { cn } from '../../lib/utils';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
   pointInPolygon, strokePoints, strokeBounds, translateStroke, scaleStroke,
@@ -105,7 +106,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // 빈 페이지는 획이 없으면 저장할 게 없어 재방문 시 사라질 수 있다(내용 유실 0 — v1 한계).
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCount, setPageCount] = useState(1);
-  const [pageMenuOpen, setPageMenuOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);         // 삼성노트식 페이지 썸네일 갤러리
+  const [pageThumbs, setPageThumbs] = useState<string[]>([]);    // 갤러리용 페이지별 미리보기(data URL)
   const pageIndexRef = useRef(0);
   const pageCountRef = useRef(1);
   const scrollViewRef = useRef<HTMLDivElement>(null); // 확대 스크롤 뷰포트(스크롤 페이지 이동 감지용)
@@ -137,7 +139,6 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // 현재(또는 지정) 페이지 삭제: 그 페이지 획은 erase로 제거(동기화)하고, 뒤 페이지는 한 칸 당긴다.
   const deletePage = (p: number) => {
     if (pageCountRef.current <= 1) return; // 최소 1페이지 유지
-    setPageMenuOpen(false);
     const removeIds: string[] = [];
     for (const st of strokesRef.current.values()) if (pageOf(st) === p) removeIds.push(st.id);
     // 뒤 페이지 인덱스 -1 (구조 재색인)
@@ -168,6 +169,27 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     clearInteractions();
     layersRef.current.forEach((l) => rebuildLayer(l.id)); composite();
     onStructureChange?.(); // 재색인 영속(순서변경은 실시간 델타 없이 노트 저장으로 전파)
+  };
+  // 갤러리용: 페이지 p의 획을 작은 캔버스에 렌더해 미리보기 data URL 생성.
+  const renderPageThumb = (p: number): string => {
+    const tw = 150, th = Math.max(1, Math.round((tw * height) / width));
+    const tc = document.createElement('canvas'); tc.width = tw; tc.height = th;
+    const ctx = tc.getContext('2d'); if (!ctx) return '';
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, tw, th);
+    ctx.save(); ctx.scale(tw / width, th / height);
+    for (const layer of layersRef.current) {
+      if (!layer.visible) continue;
+      for (const st of strokesRef.current.values()) {
+        if (st.layerId !== layer.id || pageOf(st) !== p) continue;
+        renderStrokeSmoothed(ctx, st);
+      }
+    }
+    ctx.restore();
+    return tc.toDataURL('image/png');
+  };
+  const openGallery = () => {
+    setPageThumbs(Array.from({ length: pageCountRef.current }, (_, i) => renderPageThumb(i)));
+    setGalleryOpen(true);
   };
 
   // P1 전사→획 하이라이트 박스(잠깐 반짝이고 사라짐)
@@ -845,38 +867,59 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       {/* 페이지 네비 (삼성노트 #13): ◀ n/N ▶ + 새 페이지 + 페이지 메뉴(삭제·순서변경). 좌하단.
           전사 패널이 열리면 controlsBottomInset만큼 위로 올라와 가려지지 않는다.
           휠을 페이지 경계에서 굴리면 이전/다음 페이지로도 이동한다. */}
-      {pageMenuOpen && <div className="fixed inset-0 z-30" onClick={() => setPageMenuOpen(false)} />}
       <div style={{ bottom: 12 + controlsBottomInset }} className="absolute left-3 z-40 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none transition-[bottom]">
         <button onClick={() => goToPage(pageIndex - 1)} title="이전 페이지" disabled={pageIndex <= 0}
           className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
-        <button onClick={() => setPageMenuOpen((o) => !o)} title="페이지 관리(삭제·순서변경)"
+        <button onClick={openGallery} title="페이지 갤러리(미리보기·이동·삭제·순서변경)"
           className="text-xs font-bold text-slate-700 tabular-nums px-1 rounded hover:bg-slate-100">{pageIndex + 1}/{pageCount}</button>
         <button onClick={() => goToPage(pageIndex + 1)} title="다음 페이지" disabled={pageIndex >= pageCount - 1}
           className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button>
         <div className="w-px h-4 bg-slate-200 mx-0.5" />
         <button onClick={addPage} title="새 페이지 추가"
           className="p-1.5 rounded-full hover:bg-blue-50 text-blue-600"><FilePlus2 className="w-4 h-4" /></button>
-
-        {/* 페이지 관리 팝오버 (pill 위로) */}
-        {pageMenuOpen && (
-          <div className="absolute bottom-full left-0 mb-2 w-44 bg-white rounded-xl border border-slate-200 shadow-xl p-1.5 z-50">
-            <div className="text-[11px] font-bold text-slate-400 px-2 py-1">{pageIndex + 1}페이지</div>
-            <button onClick={() => movePage(pageIndex, -1)} disabled={pageIndex <= 0}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent">
-              <ChevronLeft className="w-4 h-4" /> 앞으로 이동
-            </button>
-            <button onClick={() => movePage(pageIndex, 1)} disabled={pageIndex >= pageCount - 1}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent">
-              <ChevronRight className="w-4 h-4" /> 뒤로 이동
-            </button>
-            <div className="h-px bg-slate-100 my-1" />
-            <button onClick={() => deletePage(pageIndex)} disabled={pageCount <= 1}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-rose-600 hover:bg-rose-50 disabled:opacity-40 disabled:hover:bg-transparent">
-              <Trash2 className="w-4 h-4" /> 이 페이지 삭제
-            </button>
-          </div>
-        )}
       </div>
+
+      {/* 페이지 갤러리 (삼성노트식): 썸네일 그리드 — 클릭 이동, +추가, 카드별 순서변경·삭제 */}
+      {galleryOpen && (
+        <div className="absolute inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setGalleryOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-full flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <h3 className="font-bold text-slate-800 text-sm">페이지 <span className="text-slate-400 font-medium">({pageCount})</span></h3>
+              <button onClick={() => setGalleryOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-4">
+              {pageThumbs.map((src, i) => (
+                <div key={i} className="group relative flex flex-col items-center gap-1.5">
+                  <button
+                    onClick={() => { goToPage(i); setGalleryOpen(false); }}
+                    className={cn('relative w-full rounded-lg overflow-hidden border-2 bg-white shadow-sm transition-all hover:shadow-md',
+                      i === pageIndex ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300')}
+                    style={{ aspectRatio: `${width} / ${height}` }}
+                  >
+                    {src ? <img src={src} alt={`페이지 ${i + 1}`} className="w-full h-full object-cover" draggable={false} /> : <span className="text-slate-300 text-xs">빈 페이지</span>}
+                  </button>
+                  <span className={cn('text-xs font-bold', i === pageIndex ? 'text-blue-600' : 'text-slate-500')}>{i + 1}</span>
+                  {/* 카드 hover 시 순서변경·삭제 */}
+                  <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => { movePage(i, -1); openGallery(); }} disabled={i <= 0}
+                      title="앞으로" className="p-1 rounded bg-white/90 border border-slate-200 shadow text-slate-600 hover:bg-slate-50 disabled:opacity-30"><ChevronLeft className="w-3 h-3" /></button>
+                    <button onClick={() => { movePage(i, 1); openGallery(); }} disabled={i >= pageCount - 1}
+                      title="뒤로" className="p-1 rounded bg-white/90 border border-slate-200 shadow text-slate-600 hover:bg-slate-50 disabled:opacity-30"><ChevronRight className="w-3 h-3" /></button>
+                    <button onClick={() => { deletePage(i); openGallery(); }} disabled={pageCount <= 1}
+                      title="삭제" className="p-1 rounded bg-white/90 border border-slate-200 shadow text-rose-500 hover:bg-rose-50 disabled:opacity-30"><Trash2 className="w-3 h-3" /></button>
+                  </div>
+                </div>
+              ))}
+              {/* + 새 페이지 */}
+              <button onClick={() => { addPage(); openGallery(); }} title="새 페이지"
+                className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-blue-400 hover:text-blue-500 transition-colors"
+                style={{ aspectRatio: `${width} / ${height}` }}>
+                <FilePlus2 className="w-6 h-6" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 확대/축소 컨트롤 (100% = 화면 맞춤). Ctrl/⌘+휠로도 조절. 전사 패널 열림 시 위로. */}
       <div style={{ bottom: 12 + controlsBottomInset }} className="absolute right-3 z-30 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none transition-[bottom]">
