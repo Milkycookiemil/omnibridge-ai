@@ -1,6 +1,7 @@
 // src/components/ink/QuickColorPalette.tsx
 // 3색 퀵 팔레트(즐겨찾기). 삼성 노트 참고 — 올가미 버튼 왼쪽에 두어 색을 바로바로 적용.
-//  - 클릭/탭: 해당 색을 현재 펜에 즉시 적용
+//  - 탭(비활성 스와치): 그 색을 현재 펜에 즉시 적용(활성이 됨)
+//  - 탭(이미 활성 스와치): 색상 상세 선택기 열기 / 다시 탭하면 닫힘 (삼성노트식)
 //  - 우클릭(마우스) 또는 길게 누르기 600ms(태블릿/터치): 그 칸을 '현재 펜 색'으로 저장
 // 색은 preferences에 영속되어 노트·기기 재방문에도 유지된다.
 //
@@ -13,6 +14,7 @@
 import React, { useRef, useState } from 'react';
 import { usePreferences } from '../../lib/preferences';
 import { cn } from '../../lib/utils';
+import { ColorDetailPicker } from './ColorDetailPicker';
 
 const LONG_PRESS_MS = 600;
 
@@ -26,10 +28,11 @@ export function QuickColorPalette({ activeColor, onPick }: QuickColorPaletteProp
   const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
   // 길게 누르기 감지: pointerdown에서 타이머 시작, up/cancel로 해제.
-  // (leave로는 취소하지 않는다 — 포인터 캡처 덕에 up은 어디서 떼도 버튼에 도착)
   const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressClickRef = useRef(false); // 저장이 발동했으면 이어지는 click(적용)은 무시
   const [savedFlash, setSavedFlash] = useState<number | null>(null); // 저장 피드백(잠깐 반짝)
+  const [detailFor, setDetailFor] = useState<number | null>(null);   // 상세 선택기 열린 슬롯
+  const [detailOrig, setDetailOrig] = useState('#000000');           // 전/후 미리보기의 '전'
 
   const saveSlot = (i: number) => {
     suppressClickRef.current = true; // 타이머·contextmenu 어느 경로든 저장 후 click 억제
@@ -42,18 +45,36 @@ export function QuickColorPalette({ activeColor, onPick }: QuickColorPaletteProp
   };
   const startPress = (e: React.PointerEvent, i: number) => {
     suppressClickRef.current = false;
-    // 미끄러짐 허용: 캡처를 걸면 손가락이 스와치 밖으로 나가도 이벤트가 버튼으로 온다.
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 미지원 브라우저 무해 */ }
     cancelPress();
     pressTimerRef.current = setTimeout(() => saveSlot(i), LONG_PRESS_MS);
   };
 
+  const handleTap = (i: number) => {
+    if (suppressClickRef.current) { suppressClickRef.current = false; return; } // 길게 누르기 저장 뒤 click 무시
+    if (detailFor === i) { setDetailFor(null); return; }        // 상세 열려있으면 닫기
+    if (eq(activeColor, favoriteColors[i])) {                   // 이미 활성 → 상세 열기
+      setDetailOrig(favoriteColors[i]);
+      setDetailFor(i);
+    } else {                                                    // 아니면 적용(활성화)
+      setDetailFor(null);
+      onPick(favoriteColors[i]);
+    }
+  };
+
+  // 상세에서 색 선택 → 그 슬롯의 색으로 저장 + 현재 펜에 적용(활성 스와치이므로).
+  const handleDetailChange = (hex: string) => {
+    if (detailFor === null) return;
+    setFavoriteColor(detailFor, hex);
+    onPick(hex);
+  };
+
   return (
-    <div className="flex items-center" title="퀵 색상 · 클릭=적용 / 우클릭·길게 누르기=현재 색 저장">
+    <div className="relative flex items-center" title="퀵 색상 · 탭=적용 / 활성 스와치 재탭=상세 / 길게=현재 색 저장">
       {favoriteColors.map((c, i) => (
         <button
           key={i}
-          onClick={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } onPick(c); }}
+          onClick={() => handleTap(i)}
           onContextMenu={(e) => { e.preventDefault(); cancelPress(); saveSlot(i); }}
           onPointerDown={(e) => startPress(e, i)}
           onPointerUp={cancelPress}
@@ -66,12 +87,26 @@ export function QuickColorPalette({ activeColor, onPick }: QuickColorPaletteProp
             className={cn(
               'block w-5 h-5 rounded-full border shadow-sm transition-transform group-hover:scale-110',
               savedFlash === i ? 'ring-2 ring-emerald-400 scale-125'
-                : eq(activeColor, c) ? 'border-slate-500 ring-2 ring-slate-300 scale-110' : 'border-slate-200'
+                : (detailFor === i || eq(activeColor, c)) ? 'border-slate-500 ring-2 ring-slate-300 scale-110' : 'border-slate-200'
             )}
             style={{ backgroundColor: c }}
           />
         </button>
       ))}
+
+      {/* 색상 상세 선택기 (스와치 아래로 펼침). 바깥 클릭 시 닫힘. */}
+      {detailFor !== null && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setDetailFor(null)} />
+          <div className="absolute top-full left-0 mt-2 z-50">
+            <ColorDetailPicker
+              original={detailOrig}
+              color={favoriteColors[detailFor] ?? activeColor}
+              onChange={handleDetailChange}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
