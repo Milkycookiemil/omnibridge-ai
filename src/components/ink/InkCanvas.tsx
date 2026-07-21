@@ -19,6 +19,7 @@ import {
   type InkDelta, type InkSegment, type InkStroke, type InkLayer, type PenModel,
 } from '../../lib/inkEngine';
 import { LayerPanel } from './LayerPanel';
+import { usePreferences } from '../../lib/preferences';
 
 const genId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const DEFAULT_LAYER: InkLayer = { id: 'layer-1', name: '레이어 1', visible: true };
@@ -112,6 +113,23 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   const pageCountRef = useRef(1);
   const scrollViewRef = useRef<HTMLDivElement>(null); // 확대 스크롤 뷰포트(스크롤 페이지 이동 감지용)
   const flipCooldownRef = useRef(0);                  // 관성 스크롤로 여러 장 넘어가지 않게 쿨다운
+
+  // 보기 방식 (설정에서 선택): 'scroll' = 연속 스크롤(페이지가 세로로 이어짐, 기본) / 'flip' = 페이지 넘김.
+  const { noteViewMode } = usePreferences();
+  const scrollMode = noteViewMode === 'scroll';
+  const scrollModeRef = useRef(scrollMode); scrollModeRef.current = scrollMode;
+  // 연속 스크롤용: 페이지별 캔버스/박스 엘리먼트. 활성 페이지 캔버스만 레이어 합성 대상이고
+  // 나머지는 모델에서 정적 렌더된다(그리기 시작하면 그 페이지가 즉시 활성으로 전환).
+  const pageCanvasElsRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const pageBoxElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  const staticTmpRef = useRef<HTMLCanvasElement | null>(null); // 정적 렌더용 레이어 임시 캔버스(재사용)
+  const [staticsTick, setStaticsTick] = useState(0);           // 정적 페이지 재렌더 트리거
+  const bumpStatics = () => setStaticsTick((t) => t + 1);
+  // 활성 캔버스: 스크롤 모드는 활성 페이지의 캔버스, 플립 모드는 단일 canvasRef.
+  const getActiveCanvas = (): HTMLCanvasElement | null =>
+    scrollModeRef.current
+      ? pageCanvasElsRef.current.get(pageIndexRef.current) ?? canvasRef.current
+      : canvasRef.current;
   const pageOf = (st: { page?: number }) => st.page ?? 0;
   // 원격/로드 획이 현재 페이지 수 밖을 가리키면 페이지 수를 늘린다(기기 간 페이지 자동 전파).
   const ensurePageCount = (n: number) => {
@@ -122,15 +140,29 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     previewRef.current = null; dragRef.current = null; lassoRef.current = null; gestureRef.current = null;
     drawingRef.current = false; lastRef.current = null; currentStrokeIdRef.current = null;
   };
-  const goToPage = (i: number) => {
+  // 활성(그리기 대상) 페이지 전환 코어 — 레이어를 새 페이지 내용으로 재구성하고,
+  // (스크롤 모드) 이전 활성 페이지는 정적 렌더로 되돌린다. 스크롤은 건드리지 않는다.
+  const activatePageCore = (i: number) => {
     const clamped = Math.max(0, Math.min(pageCountRef.current - 1, i));
     if (clamped === pageIndexRef.current) return;
+    const old = pageIndexRef.current;
     pageIndexRef.current = clamped;
     setPageIndex(clamped);
     clearInteractions();
-    if (scrollViewRef.current) scrollViewRef.current.scrollTop = 0; // 새 페이지는 위에서 시작
     layersRef.current.forEach((l) => rebuildLayer(l.id));
     composite();
+    if (scrollModeRef.current) renderStaticPage(old);
+  };
+  const goToPage = (i: number) => {
+    const clamped = Math.max(0, Math.min(pageCountRef.current - 1, i));
+    activatePageCore(clamped);
+    if (scrollModeRef.current) {
+      // 연속 스크롤: 해당 페이지 박스로 스크롤(박스가 아직 없으면 다음 프레임에).
+      const scrollToBox = () => pageBoxElsRef.current.get(clamped)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (pageBoxElsRef.current.get(clamped)) scrollToBox(); else requestAnimationFrame(scrollToBox);
+    } else if (scrollViewRef.current) {
+      scrollViewRef.current.scrollTop = 0; // 플립: 새 페이지는 위에서 시작
+    }
   };
   const addPage = () => {
     ensurePageCount(pageCountRef.current + 1);
@@ -151,6 +183,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     pageIndexRef.current = ni; setPageIndex(ni);
     clearInteractions();
     layersRef.current.forEach((l) => rebuildLayer(l.id)); composite();
+    bumpStatics();
     // 삭제 획은 원격에도 전파(+저장 트리거). 획 없는 빈 페이지 삭제여도 재색인 저장 필요.
     if (removeIds.length) onDelta?.({ type: 'erase_strokes', strokeIds: removeIds });
     onStructureChange?.();
@@ -168,6 +201,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     pageIndexRef.current = ni; setPageIndex(ni);
     clearInteractions();
     layersRef.current.forEach((l) => rebuildLayer(l.id)); composite();
+    bumpStatics();
     onStructureChange?.(); // 재색인 영속(순서변경은 실시간 델타 없이 노트 저장으로 전파)
   };
   // 갤러리용: 페이지 p의 획을 작은 캔버스에 렌더해 미리보기 data URL 생성.
@@ -238,9 +272,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     return c;
   };
 
-  // 표시 캔버스 = 보이는 레이어들을 순서대로 합성
+  // 표시 캔버스(활성 페이지) = 보이는 레이어들을 순서대로 합성
   const composite = () => {
-    const main = canvasRef.current;
+    const main = getActiveCanvas();
     const ctx = main?.getContext('2d');
     if (!main || !ctx) return;
     ctx.clearRect(0, 0, main.width, main.height);
@@ -249,6 +283,34 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       const lc = layerCanvasesRef.current.get(layer.id);
       if (lc) ctx.drawImage(lc, 0, 0);
     }
+  };
+
+  // (연속 스크롤) 비활성 페이지를 모델에서 정적 렌더.
+  // 레이어 시맨틱(영역 지우개=해당 레이어만) 보존을 위해 레이어별 임시 캔버스를 거쳐 합성한다.
+  const renderStaticPage = (p: number) => {
+    if (!scrollModeRef.current) return;
+    const el = pageCanvasElsRef.current.get(p);
+    if (!el || p === pageIndexRef.current) return;
+    const ctx = el.getContext('2d'); if (!ctx) return;
+    let tmp = staticTmpRef.current;
+    if (!tmp) { tmp = document.createElement('canvas'); staticTmpRef.current = tmp; }
+    tmp.width = width; tmp.height = height;
+    const tctx = tmp.getContext('2d'); if (!tctx) return;
+    ctx.clearRect(0, 0, el.width, el.height);
+    for (const layer of layersRef.current) {
+      if (!layer.visible) continue;
+      tctx.clearRect(0, 0, width, height);
+      let any = false;
+      for (const st of strokesRef.current.values()) {
+        if (st.layerId !== layer.id || pageOf(st) !== p) continue;
+        renderStrokeSmoothed(tctx, st); any = true;
+      }
+      if (any) ctx.drawImage(tmp, 0, 0);
+    }
+  };
+  const renderAllStatics = () => {
+    if (!scrollModeRef.current) return;
+    for (let i = 0; i < pageCountRef.current; i++) if (i !== pageIndexRef.current) renderStaticPage(i);
   };
 
   // 한 레이어를 스트로크 모델에서 처음부터 재렌더 (획 삭제·리사이즈 후)
@@ -290,12 +352,18 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
         strokesRef.current.set(strokeId, stroke);
       }
       stroke.segs.push({ from: delta.from, to: delta.to, width: delta.width });
-      // 다른 페이지의 획은 모델에만 쌓고(위에서 저장됨), 화면엔 그 페이지로 넘어갈 때 렌더된다.
       if (pageOf(stroke) === pageIndexRef.current) {
         const ctx = getLayerCanvas(stroke.layerId).getContext('2d');
         if (ctx) renderInkSegment(ctx, delta);
         composite();
+      } else if (scrollModeRef.current) {
+        // 연속 스크롤: 다른 페이지의 원격 획도 그 페이지 정적 캔버스에 바로 보이게.
+        // (지우개는 레이어 시맨틱 보존을 위해 전체 정적 재렌더)
+        const sctx = pageCanvasElsRef.current.get(pageOf(stroke))?.getContext('2d');
+        if (delta.penType !== 'eraser' && sctx) renderInkSegment(sctx, delta);
+        else renderStaticPage(pageOf(stroke));
       }
+      // (플립 모드) 다른 페이지 획은 모델에만 쌓이고 그 페이지로 넘어갈 때 렌더된다.
     } else if (delta.type === 'erase_strokes') {
       const affectedLayers = new Set<string>();
       for (const id of delta.strokeIds) {
@@ -307,6 +375,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       }
       affectedLayers.forEach(rebuildLayer);
       composite();
+      bumpStatics(); // 다른 페이지 획이 지워졌을 수 있음(연속 스크롤 정적 갱신)
     } else if (delta.type === 'stroke_time') {
       // 원격/리플레이: 이미 존재하는 획에 녹음 시각을 설정(획↔전사 싱크 전파)
       const st = strokesRef.current.get(delta.strokeId);
@@ -345,6 +414,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     for (const st of addStrokes) { strokesRef.current.set(st.id, st); affected.add(st.layerId); }
     previewRef.current = null;
     affected.forEach(rebuildLayer); composite();
+    bumpStatics(); // undo/redo가 다른 페이지 획을 바꿨을 수 있음
     if (removeIds.length) onDelta?.({ type: 'erase_strokes', strokeIds: removeIds });
     for (const st of addStrokes) for (const s of st.segs) onDelta?.({ from: s.from, to: s.to, width: s.width, penType: st.penType, color: st.color, opacity: st.opacity, strokeId: st.id, layerId: st.layerId, page: st.page });
   };
@@ -418,9 +488,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       applySelection(null);
       pageIndexRef.current = 0; pageCountRef.current = 1; setPageIndex(0); setPageCount(1);
       composite();
+      bumpStatics();
+      if (scrollViewRef.current) scrollViewRef.current.scrollTop = 0;
     },
-    exportPng: () => canvasRef.current?.toDataURL('image/png') ?? null,
-    getCanvas: () => canvasRef.current,
+    exportPng: () => getActiveCanvas()?.toDataURL('image/png') ?? null,
+    getCanvas: () => getActiveCanvas(),
     // 스트로크 모델 스냅샷(깊은 복사) — 저장 후 외부 변형이 캔버스에 영향 없게.
     exportStrokes: () =>
       [...strokesRef.current.values()].map((st) => ({
@@ -447,6 +519,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       undoStackRef.current = []; redoStackRef.current = []; notifyHistory();
       applySelection(null);
       composite();
+      bumpStatics();
+      if (scrollViewRef.current) scrollViewRef.current.scrollTop = 0;
     },
   }));
 
@@ -474,6 +548,45 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     setDispScale((page.w ? page.w / width : 1) * zoom);
   }, [page.w, zoom, width]);
 
+  // (연속 스크롤) 비활성 페이지 정적 렌더 — DOM에 페이지 박스가 생긴 뒤 실행되도록 이펙트로.
+  useEffect(() => {
+    if (!scrollMode) return;
+    renderAllStatics();
+    composite(); // 모드 전환/활성 변경 직후 활성 캔버스도 확실히 갱신
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staticsTick, pageCount, pageIndex, scrollMode]);
+
+  // 보기 방식 전환(scroll↔flip): 새로 마운트된 캔버스에 활성 페이지를 다시 그린다.
+  useEffect(() => {
+    layersRef.current.forEach((l) => rebuildLayer(l.id));
+    composite();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollMode]);
+
+  // (연속 스크롤) 스크롤을 따라 "보고 있는 페이지"를 활성으로 — 필기 레이어·페이지 라벨이 시야를 따라간다.
+  useEffect(() => {
+    if (!scrollMode) return;
+    const el = scrollViewRef.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const mid = el.getBoundingClientRect().top + el.clientHeight / 2;
+        let best = -1, bestDist = Infinity;
+        for (const [i, box] of pageBoxElsRef.current) {
+          const r = box.getBoundingClientRect();
+          const d = Math.abs((r.top + r.bottom) / 2 - mid);
+          if (d < bestDist) { bestDist = d; best = i; }
+        }
+        if (best >= 0 && best !== pageIndexRef.current && !drawingRef.current) activatePageCore(best);
+      }, 120);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollMode]);
+
   // 크기 변경 시 오프스크린 재생성 + 모델에서 재렌더 (내용 유실 없음)
   useEffect(() => {
     layerCanvasesRef.current.forEach((c) => {
@@ -497,8 +610,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   }, [selectMode]);
 
   // --- 포인터 입력 ---
+  // 좌표는 이벤트를 받은 캔버스 기준(연속 스크롤에선 페이지마다 캔버스가 다르다).
   const toCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current!;
+    const canvas = e.currentTarget;
     const rect = canvas.getBoundingClientRect();
     return {
       x: ((e.clientX - rect.left) / rect.width) * canvas.width,
@@ -559,7 +673,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   const HANDLE_HIT = 16; // 리사이즈 핸들 히트 반경(표시 px)
   const drawLasso = () => {
     composite();
-    const ctx = canvasRef.current?.getContext('2d');
+    const ctx = getActiveCanvas()?.getContext('2d');
     const pts = lassoRef.current;
     if (!ctx || !pts || pts.length < 2) return;
     ctx.save();
@@ -669,7 +783,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
   const drawGesturePreview = () => {
     composite();
-    const ctx = canvasRef.current?.getContext('2d'); const pts = gestureRef.current;
+    const ctx = getActiveCanvas()?.getContext('2d'); const pts = gestureRef.current;
     if (!ctx || !pts || pts.length < 1) return;
     ctx.save();
     ctx.globalAlpha = pen.opacity; ctx.strokeStyle = pen.color; ctx.lineWidth = widthForPressure(pen, 0.5);
@@ -687,6 +801,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    // 연속 스크롤: 다른 페이지 캔버스에 펜을 대면 그 페이지를 즉시 활성으로(그대로 그리기 시작).
+    if (scrollModeRef.current) {
+      const p = Number(e.currentTarget.dataset.page ?? pageIndexRef.current);
+      if (!Number.isNaN(p) && p !== pageIndexRef.current) activatePageCore(p);
+    }
     const pt = toCanvasCoords(e);
     if (selectMode) { handleSelectDown(pt); return; }
     drawingRef.current = true;
@@ -771,13 +890,15 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }
   };
 
-  // 휠: Ctrl/⌘=확대축소 / 확대 상태에선 페이지 내부 스크롤 / 경계 도달 시 이전·다음 페이지로 이동.
+  // 휠: Ctrl/⌘=확대축소. (플립 모드) 경계 도달 시 이전·다음 페이지로 이동.
+  // (연속 스크롤 모드) 일반 휠은 네이티브 스크롤 그대로 — 페이지가 이어져 보인다.
   const handleWheel = (e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       setZoomClamped((z) => z * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
       return;
     }
+    if (scrollModeRef.current) return;
     const el = scrollViewRef.current;
     if (!el) return;
     const dir = e.deltaY > 0 ? 1 : -1;
@@ -794,74 +915,116 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }
   };
 
+  // 페이지 배경(종이 무늬·슬라이드 이미지)과 활성 페이지 오버레이(하이라이트·올가미) — 두 모드 공용 조각.
+  const pageDecor = (
+    <>
+      {backgroundImage && (
+        <img
+          src={backgroundImage}
+          alt="필기 배경"
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+          draggable={false}
+        />
+      )}
+      {backgroundStyle && <div className="absolute inset-0 pointer-events-none" style={backgroundStyle} />}
+    </>
+  );
+  const canvasHandlers = {
+    onPointerDown: handlePointerDown,
+    onPointerMove: handlePointerMove,
+    onPointerUp: handlePointerUp,
+    onPointerLeave: handlePointerUp,
+  };
+  const canvasCursor = { cursor: selectMode ? 'crosshair' : cursorForPen(pen, dispScale) };
+  const pageOverlays = (
+    <>
+      {/* P1: 전사 라인 클릭 시 그 시각에 그린 획 영역을 잠깐 하이라이트 */}
+      {highlightBox && (
+        <div
+          className="absolute rounded-lg border-2 border-amber-400 bg-amber-300/20 pointer-events-none animate-pulse z-[14]"
+          style={{ left: (highlightBox.x - 8) * dispScale, top: (highlightBox.y - 8) * dispScale, width: (highlightBox.w + 16) * dispScale, height: (highlightBox.h + 16) * dispScale }}
+        />
+      )}
+      {/* 올가미 선택 오버레이 (페이지 박스 내부, 표시 좌표 = 논리좌표 × dispScale) */}
+      {selectMode && selection && (
+        <>
+          <div
+            className="absolute border-2 border-blue-500 border-dashed rounded-sm pointer-events-none z-[15]"
+            style={{ left: selection.box.x * dispScale, top: selection.box.y * dispScale, width: selection.box.w * dispScale, height: selection.box.h * dispScale }}
+          />
+          <div
+            className="absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-sm pointer-events-none z-[16]"
+            style={{ left: (selection.box.x + selection.box.w) * dispScale - 6, top: (selection.box.y + selection.box.h) * dispScale - 6 }}
+          />
+          <div
+            className="absolute flex items-center gap-1 bg-white rounded-xl shadow-lg border border-slate-200 px-2 py-1.5 z-20"
+            style={{ left: selection.box.x * dispScale, top: Math.max(selection.box.y * dispScale - 46, 4) }}
+          >
+            <button onClick={duplicateSelection} title="복제" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"><Copy className="w-4 h-4" /></button>
+            <button onClick={deleteSelection} title="삭제" className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500"><Trash2 className="w-4 h-4" /></button>
+            <div className="w-px h-5 bg-slate-200 mx-0.5" />
+            {['#334155', '#ef4444', '#3b82f6', '#10b981', '#f59e0b'].map((c) => (
+              <button key={c} onClick={() => recolorSelection(c)} title="색 변경" className="w-5 h-5 rounded-full border border-slate-200 hover:scale-110 transition-transform" style={{ backgroundColor: c }} />
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+
   return (
     <div
       ref={containerRef}
       className={`relative overflow-hidden bg-slate-100 ${className ?? ''}`}
     >
-      {/* 확대 시 스크롤되는 뷰포트. 페이지가 작으면 가운데 정렬, 크면 스크롤. 경계에서 휠=페이지 이동. */}
+      {/* 뷰포트: (연속 스크롤) 페이지들이 세로로 이어짐 / (플립) 단일 페이지 + 경계 휠 넘김. */}
       <div ref={scrollViewRef} className="absolute inset-0 overflow-auto" onWheel={handleWheel}>
-      <div className="min-w-full min-h-full flex items-center justify-center p-6">
-      {/* 고정 비율 페이지: 화면맞춤(100%)에 zoom 배율을 곱해 크기 결정. 찌그러짐 0. */}
-      <div
-        className="relative bg-white shadow-md shrink-0"
-        style={{ width: (page.w * zoom) || '100%', height: (page.h * zoom) || '100%' }}
-      >
-        {backgroundImage && (
-          <img
-            src={backgroundImage}
-            alt="필기 배경"
-            className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
-            draggable={false}
-          />
-        )}
-        {backgroundStyle && <div className="absolute inset-0 pointer-events-none" style={backgroundStyle} />}
-        <canvas
-          ref={canvasRef}
-          width={width}
-          height={height}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}
-          className="absolute inset-0 w-full h-full touch-none z-10"
-          style={{ cursor: selectMode ? 'crosshair' : cursorForPen(pen, dispScale) }}
-        />
-
-        {/* P1: 전사 라인 클릭 시 그 시각에 그린 획 영역을 잠깐 하이라이트 */}
-        {highlightBox && (
-          <div
-            className="absolute rounded-lg border-2 border-amber-400 bg-amber-300/20 pointer-events-none animate-pulse z-[14]"
-            style={{ left: (highlightBox.x - 8) * dispScale, top: (highlightBox.y - 8) * dispScale, width: (highlightBox.w + 16) * dispScale, height: (highlightBox.h + 16) * dispScale }}
-          />
-        )}
-
-        {/* 올가미 선택 오버레이 (페이지 박스 내부, 표시 좌표 = 논리좌표 × dispScale) */}
-        {selectMode && selection && (
-          <>
+        {scrollMode ? (
+          <div className="min-w-full flex flex-col items-center gap-6 p-6">
+            {Array.from({ length: pageCount }, (_, i) => (
+              <div
+                key={i}
+                ref={(el) => { if (el) pageBoxElsRef.current.set(i, el); else pageBoxElsRef.current.delete(i); }}
+                className="relative bg-white shadow-md shrink-0"
+                style={{ width: (page.w * zoom) || '100%', height: (page.h * zoom) || 400 }}
+              >
+                {pageDecor}
+                <canvas
+                  data-page={i}
+                  ref={(el) => { if (el) pageCanvasElsRef.current.set(i, el); else pageCanvasElsRef.current.delete(i); }}
+                  width={width}
+                  height={height}
+                  {...canvasHandlers}
+                  className="absolute inset-0 w-full h-full touch-none z-10"
+                  style={canvasCursor}
+                />
+                {/* 페이지 번호 칩 */}
+                <span className={cn('absolute top-1.5 right-1.5 z-[12] text-[10px] font-bold px-1.5 py-0.5 rounded-full pointer-events-none',
+                  i === pageIndex ? 'bg-blue-500 text-white' : 'bg-slate-200/80 text-slate-500')}>{i + 1}</span>
+                {i === pageIndex && pageOverlays}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="min-w-full min-h-full flex items-center justify-center p-6">
+            {/* 고정 비율 페이지: 화면맞춤(100%)에 zoom 배율을 곱해 크기 결정. 찌그러짐 0. */}
             <div
-              className="absolute border-2 border-blue-500 border-dashed rounded-sm pointer-events-none z-[15]"
-              style={{ left: selection.box.x * dispScale, top: selection.box.y * dispScale, width: selection.box.w * dispScale, height: selection.box.h * dispScale }}
-            />
-            <div
-              className="absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-sm pointer-events-none z-[16]"
-              style={{ left: (selection.box.x + selection.box.w) * dispScale - 6, top: (selection.box.y + selection.box.h) * dispScale - 6 }}
-            />
-            <div
-              className="absolute flex items-center gap-1 bg-white rounded-xl shadow-lg border border-slate-200 px-2 py-1.5 z-20"
-              style={{ left: selection.box.x * dispScale, top: Math.max(selection.box.y * dispScale - 46, 4) }}
+              className="relative bg-white shadow-md shrink-0"
+              style={{ width: (page.w * zoom) || '100%', height: (page.h * zoom) || '100%' }}
             >
-              <button onClick={duplicateSelection} title="복제" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"><Copy className="w-4 h-4" /></button>
-              <button onClick={deleteSelection} title="삭제" className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500"><Trash2 className="w-4 h-4" /></button>
-              <div className="w-px h-5 bg-slate-200 mx-0.5" />
-              {['#334155', '#ef4444', '#3b82f6', '#10b981', '#f59e0b'].map((c) => (
-                <button key={c} onClick={() => recolorSelection(c)} title="색 변경" className="w-5 h-5 rounded-full border border-slate-200 hover:scale-110 transition-transform" style={{ backgroundColor: c }} />
-              ))}
+              {pageDecor}
+              <canvas
+                ref={canvasRef}
+                width={width}
+                height={height}
+                {...canvasHandlers}
+                className="absolute inset-0 w-full h-full touch-none z-10"
+                style={canvasCursor}
+              />
+              {pageOverlays}
             </div>
-          </>
+          </div>
         )}
-      </div>
-      </div>
       </div>
 
       {/* 페이지 네비 (삼성노트 #13): ◀ n/N ▶ + 새 페이지 + 페이지 메뉴(삭제·순서변경). 좌하단.

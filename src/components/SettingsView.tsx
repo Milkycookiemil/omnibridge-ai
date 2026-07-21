@@ -80,7 +80,7 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLegal }) => {
   const [activeGroup, setActiveGroup] = useState<SettingGroup>('account');
   const currentEmail = getCurrentUser()?.email ?? null;
-  const { notificationsEnabled, setNotificationsEnabled } = usePreferences();
+  const { notificationsEnabled, setNotificationsEnabled, noteViewMode, setNoteViewMode } = usePreferences();
   const [data, setData] = useState(DUMMY_DATA);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showEnergyToast, setShowEnergyToast] = useState(false);
@@ -621,6 +621,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
 
                   {/* 캔버스 & 녹음 옵션 */}
                   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                    <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                      <div>
+                        <h4 className="font-bold text-slate-800 mb-1">페이지 보기 방식</h4>
+                        <p className="text-sm text-slate-500 font-medium">연속 스크롤은 페이지가 세로로 이어져 스크롤로 넘겨봅니다.</p>
+                      </div>
+                      <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+                        <button
+                          onClick={() => setNoteViewMode('scroll')}
+                          className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${noteViewMode === 'scroll' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >연속 스크롤</button>
+                        <button
+                          onClick={() => setNoteViewMode('flip')}
+                          className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${noteViewMode === 'flip' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >페이지 넘김</button>
+                      </div>
+                    </div>
                     <div className="p-6 border-b border-slate-100 flex items-center justify-between">
                       <div>
                         <h4 className="font-bold text-slate-800 mb-1">무한 줌 캔버스 엔진</h4>

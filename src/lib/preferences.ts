@@ -6,6 +6,7 @@ import { create } from 'zustand';
 const STORAGE_KEY = 'omnibridge.preferences';
 
 export type AudioSource = 'mic' | 'system' | 'both';
+export type NoteViewMode = 'scroll' | 'flip'; // 연속 스크롤(기본) / 페이지 넘김
 
 interface PersistedPrefs {
   notificationsEnabled: boolean;
@@ -13,6 +14,7 @@ interface PersistedPrefs {
   audioSource: AudioSource; // 전사/녹음 소스: 마이크 / 시스템(화면공유) / 둘 다
   micDeviceId: string | null; // 선택한 마이크 장치(없으면 기본 마이크)
   favoriteColors: string[]; // 필기 툴바 3색 퀵 팔레트(즐겨찾기). 클릭=적용/우클릭=현재색 저장
+  noteViewMode: NoteViewMode; // 필기 페이지 보기: 연속 스크롤 / 페이지 넘김
 }
 
 const DEFAULTS: PersistedPrefs = {
@@ -21,6 +23,7 @@ const DEFAULTS: PersistedPrefs = {
   audioSource: 'mic',
   micDeviceId: null,
   favoriteColors: ['#f59e0b', '#3b82f6', '#334155'], // 주황 / 파랑 / 짙은 회색
+  noteViewMode: 'scroll',
 };
 
 const loadPrefs = (): PersistedPrefs => {
@@ -39,6 +42,7 @@ interface PreferencesState extends PersistedPrefs {
   setAudioSource: (source: AudioSource) => void;
   setMicDeviceId: (id: string | null) => void;
   setFavoriteColor: (index: number, color: string) => void;
+  setNoteViewMode: (mode: NoteViewMode) => void;
 }
 
 const persist = (prefs: PersistedPrefs) => {
@@ -56,6 +60,7 @@ const snapshot = (s: PreferencesState): PersistedPrefs => ({
   audioSource: s.audioSource,
   micDeviceId: s.micDeviceId,
   favoriteColors: s.favoriteColors,
+  noteViewMode: s.noteViewMode,
 });
 
 export const usePreferences = create<PreferencesState>((set, get) => ({
@@ -80,6 +85,10 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
     const next = [...get().favoriteColors];
     next[index] = color;
     set({ favoriteColors: next });
+    persist(snapshot(get()));
+  },
+  setNoteViewMode: (mode) => {
+    set({ noteViewMode: mode });
     persist(snapshot(get()));
   },
 }));
