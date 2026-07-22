@@ -688,6 +688,20 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       y: ((e.clientY - rect.top) / rect.height) * canvas.height,
     };
   };
+  // 고주사율 입력: 브라우저가 한 번의 pointermove에 뭉쳐 보낸(coalesced) 중간 점들을 모두 꺼내
+  // 캔버스 좌표+필압으로 반환한다. 빠른 획의 점 유실(각짐)을 없앤다. 미지원이면 현재 이벤트 1개.
+  const coalescedCanvasPoints = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = e.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const nat = e.nativeEvent;
+    const coalesced = typeof nat.getCoalescedEvents === 'function' ? nat.getCoalescedEvents() : [];
+    const list: Array<{ clientX: number; clientY: number; pressure: number }> = coalesced.length ? coalesced : [nat];
+    return list.map((ev) => ({
+      x: ((ev.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((ev.clientY - rect.top) / rect.height) * canvas.height,
+      pressure: ev.pressure,
+    }));
+  };
 
   const isStrokeEraser = () => pen.type === 'eraser' && (pen.eraserMode ?? 'area') === 'stroke';
 
@@ -905,32 +919,33 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }
     if (selectMode) { if (dragRef.current) handleSelectMove(toCanvasCoords(e)); return; }
     if (!drawingRef.current) return;
-    const to = toCanvasCoords(e);
+    const pts = coalescedCanvasPoints(e); // 고주사율: 중간 점들까지 전부
 
-    if (gestureRef.current) { gestureRef.current.push(to); drawGesturePreview(); return; }
+    if (gestureRef.current) { for (const p of pts) gestureRef.current.push({ x: p.x, y: p.y }); drawGesturePreview(); return; }
 
     if (isStrokeEraser()) {
-      eraseStrokesAt(to);
+      for (const p of pts) eraseStrokesAt(p);
       return;
     }
 
-    const from = lastRef.current;
-    if (!from) { lastRef.current = to; return; }
-
-    // 마우스는 pressure=0 → inkEngine에서 0.5로 폴백. 펜은 실제 필압 사용.
-    const seg: InkSegment = {
-      from, to,
-      penType: pen.type,
-      color: pen.color,
-      width: widthForPressure(pen, e.pressure),
-      opacity: pen.opacity,
-      strokeId: currentStrokeIdRef.current ?? genId(),
-      layerId: activeLayerRef.current,
-      page: pageIndexRef.current,
-    };
-    applyDelta(seg);      // 로컬도 원격과 같은 경로로 모델에 반영
-    lastRef.current = to;
-    onDelta?.(seg);       // 실시간 릴레이(strokeId/layerId 포함)
+    // 마우스는 pressure=0 → inkEngine에서 0.5로 폴백. 펜은 각 coalesced 점의 실제 필압 사용.
+    for (const p of pts) {
+      const from = lastRef.current;
+      if (!from) { lastRef.current = { x: p.x, y: p.y }; continue; }
+      const seg: InkSegment = {
+        from, to: { x: p.x, y: p.y },
+        penType: pen.type,
+        color: pen.color,
+        width: widthForPressure(pen, p.pressure),
+        opacity: pen.opacity,
+        strokeId: currentStrokeIdRef.current ?? genId(),
+        layerId: activeLayerRef.current,
+        page: pageIndexRef.current,
+      };
+      applyDelta(seg);      // 로컬도 원격과 같은 경로로 모델에 반영
+      lastRef.current = { x: p.x, y: p.y };
+      onDelta?.(seg);       // 실시간 릴레이(strokeId/layerId 포함)
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {

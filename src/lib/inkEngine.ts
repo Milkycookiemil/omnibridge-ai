@@ -264,6 +264,24 @@ export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: Smoo
   }
   const pts = [segs[0].from, ...segs.map((s) => s.to)];
   const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+  // 획 끝 테이퍼: 시작·끝 짧은 구간의 굵기를 살짝 가늘게 해 실제 펜처럼 자연스러운 마무리.
+  //  - 렌더 전용(segs[i].width는 그대로 → 동기화·히트테스트·바운딩 불변).
+  //  - 굵기 변화가 큰(필압) 획은 이미 얇은 끝을 유지하도록 배율만 곱한다.
+  //  - 2점(자·직선 등)·형광펜·지우개는 위에서 이미 raw로 처리돼 테이퍼가 걸리지 않는다.
+  const segCount = segs.length;
+  const cum: number[] = [0];
+  for (let i = 0; i < segCount; i++) cum[i + 1] = cum[i] + Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  const total = cum[segCount];
+  let avgW = 0; for (const s of segs) avgW += s.width; avgW /= segCount;
+  const taperLen = Math.min(total / 2, Math.max(5, avgW * 2.5));
+  const tw = (i: number): number => {
+    if (taperLen <= 0) return segs[i].width;
+    const c = (cum[i] + cum[i + 1]) / 2;            // 세그먼트 중앙의 경로 위치
+    const d = Math.min(c, total - c);               // 가까운 끝까지 거리
+    return segs[i].width * (0.5 + 0.5 * Math.min(1, d / taperLen)); // 끝 0.5배 → 안쪽 1배
+  };
+
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
   ctx.lineCap = 'round';
@@ -272,7 +290,7 @@ export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: Smoo
   ctx.strokeStyle = stroke.color;
   // 시작점 → 첫 중점
   const firstMid = mid(pts[0], pts[1]);
-  ctx.lineWidth = segs[0].width;
+  ctx.lineWidth = tw(0);
   ctx.beginPath();
   ctx.moveTo(pts[0].x, pts[0].y);
   ctx.lineTo(firstMid.x, firstMid.y);
@@ -281,7 +299,7 @@ export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: Smoo
   for (let i = 1; i < pts.length - 1; i++) {
     const m0 = mid(pts[i - 1], pts[i]);
     const m1 = mid(pts[i], pts[i + 1]);
-    ctx.lineWidth = segs[i].width;
+    ctx.lineWidth = tw(i);
     ctx.beginPath();
     ctx.moveTo(m0.x, m0.y);
     ctx.quadraticCurveTo(pts[i].x, pts[i].y, m1.x, m1.y);
@@ -290,7 +308,7 @@ export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: Smoo
   // 마지막 중점 → 끝점
   const n = pts.length - 1;
   const lastMid = mid(pts[n - 1], pts[n]);
-  ctx.lineWidth = segs[n - 1].width;
+  ctx.lineWidth = tw(n - 1);
   ctx.beginPath();
   ctx.moveTo(lastMid.x, lastMid.y);
   ctx.lineTo(pts[n].x, pts[n].y);

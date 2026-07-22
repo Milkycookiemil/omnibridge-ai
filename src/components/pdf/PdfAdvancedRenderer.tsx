@@ -330,6 +330,16 @@ const PdfPage: React.FC<PdfPageProps> = ({
       y: (e.clientY - rect.top) / rect.height
     };
   };
+  // 고주사율 입력: coalesced 중간 점들을 비율좌표+필압으로 모두 반환(빠른 획 각짐 제거).
+  const coalescedRatioPoints = (e: React.PointerEvent<HTMLCanvasElement>): Array<InkPoint & { pressure: number }> => {
+    const canvas = drawingCanvasRef.current;
+    if (!canvas) return [];
+    const rect = canvas.getBoundingClientRect();
+    const nat = e.nativeEvent;
+    const coalesced = typeof nat.getCoalescedEvents === 'function' ? nat.getCoalescedEvents() : [];
+    const list: Array<{ clientX: number; clientY: number; pressure: number }> = coalesced.length ? coalesced : [nat];
+    return list.map((ev) => ({ x: (ev.clientX - rect.left) / rect.width, y: (ev.clientY - rect.top) / rect.height, pressure: ev.pressure }));
+  };
 
   // #4 제스처 미리보기(직선 스냅 / 자유곡선) — 픽셀로 그린다.
   const drawGesturePreviewPdf = () => {
@@ -455,25 +465,27 @@ const PdfPage: React.FC<PdfPageProps> = ({
     }
     if (selectMode) { if (selDragRef.current) selectMove(getCoordinatesRatio(e)); return; }
     if (!isDrawingRef.current) return;
-    if (gestureRef.current) { gestureRef.current.push(getCoordinatesRatio(e)); drawGesturePreviewPdf(); return; }
+    const pts = coalescedRatioPoints(e); // 고주사율: 중간 점들까지 전부
+    if (gestureRef.current) { for (const p of pts) gestureRef.current.push({ x: p.x, y: p.y }); drawGesturePreviewPdf(); return; }
     if (!currentStrokeRef.current) return;
-    const from = lastRatioRef.current;
-    const to = getCoordinatesRatio(e);
-    if (!from) { lastRatioRef.current = to; return; }
 
-    // 마우스는 pressure=0 → inkEngine에서 0.5로 폴백. S펜/애플펜슬은 실제 필압.
     const dCanvas = drawingCanvasRef.current;
     if (!dCanvas) return;
     // 표시 px 굵기를 내부 해상도 px로 환산해 저장 (CSS 축소 보정)
     const sf = dCanvas.width / (dCanvas.getBoundingClientRect().width || dCanvas.width);
-    const width = widthForPressure(pen, e.pressure) * sf;
-    const seg: PageInkSeg = { from, to, width };
-    currentStrokeRef.current.segs.push(seg);
-
-    // 성능을 위해 전체 재렌더 대신 델타 한 조각만 그린다.
     const ctx = dCanvas.getContext('2d');
-    if (ctx && dimensions.width) paintSeg(ctx, currentStrokeRef.current, seg);
-    lastRatioRef.current = to;
+    // 마우스는 pressure=0 → inkEngine에서 0.5로 폴백. S펜/애플펜슬은 각 점의 실제 필압.
+    for (const p of pts) {
+      const from = lastRatioRef.current;
+      const to = { x: p.x, y: p.y };
+      if (!from) { lastRatioRef.current = to; continue; }
+      const width = widthForPressure(pen, p.pressure) * sf;
+      const seg: PageInkSeg = { from, to, width };
+      currentStrokeRef.current.segs.push(seg);
+      // 성능을 위해 전체 재렌더 대신 델타 한 조각만 그린다.
+      if (ctx && dimensions.width) paintSeg(ctx, currentStrokeRef.current, seg);
+      lastRatioRef.current = to;
+    }
   };
 
   const stopDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
