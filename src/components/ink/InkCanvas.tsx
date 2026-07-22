@@ -10,7 +10,7 @@
 // 동기화: 로컬 입력은 onDelta로 세그먼트(strokeId/layerId 포함)·erase_strokes 연산을 내보내고,
 // 원격/리플레이는 ref.applyDelta로 동일 경로를 타므로 미러링·유실0 리플레이가 그대로 유지된다.
 import React, { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
-import { Copy, Trash2, Minus, Plus, ChevronLeft, ChevronRight, FilePlus2, X } from 'lucide-react';
+import { Copy, Trash2, Minus, Plus, ChevronLeft, ChevronRight, FilePlus2, X, Lock, Unlock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
@@ -244,6 +244,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // --- 올가미 선택 상태 ---
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selCursor, setSelCursor] = useState<string>('crosshair'); // 선택 모드 커서(핸들 위=방향별 리사이즈)
+  // 모서리 핸들의 가로/세로 비율 고정(기본 켬). 자물쇠를 풀면 모서리도 자유 변형.
+  const [aspectLocked, setAspectLocked] = useState(true);
+  const aspectLockRef = useRef(true); aspectLockRef.current = aspectLocked;
   const selectionRef = useRef<Selection | null>(null);
   const selectedIdsRef = useRef<Set<string>>(new Set());
   const previewRef = useRef<null | { kind: 'move'; dx: number; dy: number } | { kind: 'scale'; ax: number; ay: number; sx: number; sy: number }>(null);
@@ -819,7 +822,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     if (corner) {
       const dxr = Math.max(Math.abs(pt.x - ax), minPx) / (b.w || minPx);
       const dyr = Math.max(Math.abs(pt.y - ay), minPx) / (b.h || minPx);
-      const s = Math.max(dxr, dyr); sx = s; sy = s; // 비율 유지
+      if (aspectLockRef.current) { const s = Math.max(dxr, dyr); sx = s; sy = s; } // 비율 유지
+      else { sx = dxr; sy = dyr; }                                                  // 자유 변형
     } else if (handle === 'e' || handle === 'w') {
       sx = Math.max(Math.abs(pt.x - ax), minPx) / (b.w || minPx);
     } else {
@@ -1173,6 +1177,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
             className="absolute flex items-center gap-1 bg-white rounded-xl shadow-lg border border-slate-200 px-2 py-1.5 z-20"
             style={{ left: selection.box.x * dispScale, top: Math.max(selection.box.y * dispScale - 46, 4) }}
           >
+            <button onClick={() => setAspectLocked((v) => !v)}
+              title={aspectLocked ? '가로/세로 비율 고정됨 — 누르면 자유 변형' : '자유 변형 — 누르면 비율 고정'}
+              className={cn('p-1.5 rounded-lg', aspectLocked ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:bg-slate-100')}>
+              {aspectLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+            </button>
             <button onClick={duplicateSelection} title="복제" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"><Copy className="w-4 h-4" /></button>
             <button onClick={deleteSelection} title="삭제" className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500"><Trash2 className="w-4 h-4" /></button>
             <div className="w-px h-5 bg-slate-200 mx-0.5" />

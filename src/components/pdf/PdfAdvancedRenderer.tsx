@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes, Minus, Plus, Bookmark } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes, Minus, Plus, Bookmark, Lock, Unlock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import { QuickColorPalette } from '../ink/QuickColorPalette';
@@ -160,6 +160,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
   type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'; // 8방향 크기조절 핸들
   const [selection, setSelection] = useState<{ strokes: PageStroke[]; box: PBox } | null>(null);
   const [selCursor, setSelCursor] = useState<string>('crosshair'); // 선택 모드 커서(핸들 위=방향별 리사이즈)
+  // 모서리 핸들의 가로/세로 비율 고정(기본 켬). 자물쇠를 풀면 모서리도 자유 변형.
+  const [aspectLocked, setAspectLocked] = useState(true);
+  const aspectLockRef = useRef(true); aspectLockRef.current = aspectLocked;
   const selectionRef = useRef<{ strokes: PageStroke[]; box: PBox } | null>(null);
   const selDragRef = useRef<null | { mode: 'lasso' } | { mode: 'move'; start: InkPoint; baseBox: PBox } | { mode: 'scale'; handle: Handle; baseBox: PBox }>(null);
   const selLassoRef = useRef<InkPoint[] | null>(null);
@@ -201,7 +204,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
     if (corner) {
       const dxr = Math.max(Math.abs(pt.x - ax), MINR) / (b.w || MINR);
       const dyr = Math.max(Math.abs(pt.y - ay), MINR) / (b.h || MINR);
-      const s = Math.max(dxr, dyr); sx = s; sy = s; // 비율 유지
+      if (aspectLockRef.current) { const s = Math.max(dxr, dyr); sx = s; sy = s; } // 비율 유지
+      else { sx = dxr; sy = dyr; }                                                  // 자유 변형
     } else if (handle === 'e' || handle === 'w') {
       sx = Math.max(Math.abs(pt.x - ax), MINR) / (b.w || MINR);
     } else {
@@ -673,6 +677,11 @@ const PdfPage: React.FC<PdfPageProps> = ({
           ))}
           <div className="absolute flex items-center gap-1 bg-white rounded-lg shadow-lg border border-slate-200 px-1.5 py-1 pointer-events-auto"
             style={{ left: `${selection.box.x * 100}%`, top: `calc(${selection.box.y * 100}% - 42px)` }}>
+            <button onClick={() => setAspectLocked((v) => !v)}
+              title={aspectLocked ? '가로/세로 비율 고정됨 — 누르면 자유 변형' : '자유 변형 — 누르면 비율 고정'}
+              className={cn('p-1.5 rounded-lg', aspectLocked ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:bg-slate-100')}>
+              {aspectLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+            </button>
             <button onClick={duplicateSel} title="복제" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"><Copy className="w-4 h-4" /></button>
             <button onClick={deleteSel} title="삭제" className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-500"><Trash2 className="w-4 h-4" /></button>
             <div className="w-px h-5 bg-slate-200 mx-0.5" />
