@@ -282,7 +282,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // S펜 사이드 버튼(barrel, buttons&2)이나 펜 뒤집기(eraser tip, buttons&32)를 누른 채 그리면
   // 그 획 동안만 지우개로 동작한다(삼성노트식 빠른 지우기). 떼면 원래 펜으로 자동 복귀.
   const barrelRef = useRef(false);
-  const isBarrelPressed = (e: React.PointerEvent) => e.pointerType === 'pen' && (e.buttons & (2 | 32)) !== 0;
+  // 감지 폭을 넓힘: buttons 비트(2=사이드, 32=지우개촉) + pointerdown의 button(2=보조, 5=지우개).
+  const isBarrelPressed = (e: React.PointerEvent) =>
+    e.pointerType === 'pen' && ((e.buttons & (2 | 32)) !== 0 || e.button === 2 || e.button === 5);
   const getPen = (): PenModel => (barrelRef.current ? (eraserPen ?? DEFAULT_PENS.eraser) : pen);
   // 화면에 닿아있는 손가락(touch) 위치 — 핀치 거리/중점 계산용.
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -1101,6 +1103,9 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     onPointerMove: handlePointerMove,
     onPointerUp: handlePointerUp,
     onPointerCancel: handlePointerUp, // 브라우저가 제스처를 취소(멀티터치 등)할 때 상태 정리
+    // S펜 사이드 버튼은 안드로이드에서 '우클릭'으로 처리돼 컨텍스트 메뉴가 뜨며 펜 입력이
+    // 취소될 수 있다(→ 아무것도 안 그려짐). 캔버스 위에서는 메뉴를 막는다.
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
     onPointerLeave: handlePointerUp,
   };
   const canvasCursor = { cursor: selectMode ? selCursor : cursorForPen(pen, dispScale) };

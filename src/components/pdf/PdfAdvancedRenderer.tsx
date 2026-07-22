@@ -76,7 +76,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const fingerCanDraw = () => touchDrawRef.current && !penModeRef.current;
   // S펜 사이드 버튼(buttons&2)·펜 뒤집기(buttons&32)를 누른 채 그리면 그 획만 지우개(삼성노트식).
   const barrelRef = useRef(false);
-  const isBarrelPressed = (e: React.PointerEvent) => e.pointerType === 'pen' && (e.buttons & (2 | 32)) !== 0;
+  // 감지 폭을 넓힘: buttons 비트(2=사이드, 32=지우개촉) + pointerdown의 button(2=보조, 5=지우개).
+  const isBarrelPressed = (e: React.PointerEvent) =>
+    e.pointerType === 'pen' && ((e.buttons & (2 | 32)) !== 0 || e.button === 2 || e.button === 5);
   const getPen = (): PenModel => (barrelRef.current ? (eraserPen ?? DEFAULT_PENS.eraser) : pen);
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<null | { startDist: number; startZoom: number; lastMid: { x: number; y: number } }>(null);
@@ -640,6 +642,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
         onPointerUp={stopDraw}
         onPointerCancel={stopDraw}
         onPointerLeave={stopDraw}
+        onContextMenu={(e) => e.preventDefault()}
         className="absolute inset-0 w-full h-full touch-none z-20"
         style={{ cursor: selectMode ? selCursor : cursorForPen(pen) }}
       />
