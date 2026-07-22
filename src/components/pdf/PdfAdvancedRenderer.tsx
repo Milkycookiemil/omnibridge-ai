@@ -376,7 +376,23 @@ const PdfPage: React.FC<PdfPageProps> = ({
            segs: st.segs.map(s => ({ from: { x: s.from.x * W, y: s.from.y * H }, to: { x: s.to.x * W, y: s.to.y * H }, width: s.width })),
          });
       });
+      // 아직 커밋 전인(그리는 중인) 획도 함께 — 형광펜을 매번 '획 전체 1회 stroke'로 다시 그리기 위해 필요.
+      const cur = currentStrokeRef.current;
+      if (cur && cur.segs.length) {
+        renderStrokeSmoothed(ctx, {
+          penType: cur.penType, color: cur.color, opacity: cur.opacity,
+          segs: cur.segs.map(s => ({ from: { x: s.from.x * W, y: s.from.y * H }, to: { x: s.to.x * W, y: s.to.y * H }, width: s.width })),
+        });
+      }
   };
+
+  // 형광펜은 조각별로 칠하면 같은 획 안에서 겹쳐 진해진다 → 매 프레임 전체를 다시 그린다.
+  const hlRafRef = useRef<number | null>(null);
+  const scheduleHighlighterRedraw = () => {
+    if (hlRafRef.current !== null) return;
+    hlRafRef.current = requestAnimationFrame(() => { hlRafRef.current = null; redrawStrokes(); });
+  };
+  useEffect(() => () => { if (hlRafRef.current !== null) cancelAnimationFrame(hlRafRef.current); }, []);
 
   const getCoordinatesRatio = (e: React.PointerEvent<HTMLCanvasElement>): InkPoint => {
     const canvas = drawingCanvasRef.current;
@@ -570,8 +586,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
       const width = widthForPressure(dp, p.pressure) * sf;
       const seg: PageInkSeg = { from, to, width };
       currentStrokeRef.current.segs.push(seg);
-      // 성능을 위해 전체 재렌더 대신 델타 한 조각만 그린다.
-      if (ctx && dimensions.width) paintSeg(ctx, currentStrokeRef.current, seg);
+      // 성능을 위해 전체 재렌더 대신 델타 한 조각만 그린다. (형광펜만 예외: 전체 1회 stroke)
+      if (dp.type === 'highlighter') scheduleHighlighterRedraw();
+      else if (ctx && dimensions.width) paintSeg(ctx, currentStrokeRef.current, seg);
       lastRatioRef.current = to;
     }
   };

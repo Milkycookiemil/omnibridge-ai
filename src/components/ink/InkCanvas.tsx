@@ -444,6 +444,23 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }
   };
 
+  // 형광펜 전용 재렌더 예약: 그리는 도중에도 '획 1개 = stroke() 1회'를 유지해야
+  // 같은 획 안에서 겹쳐도 진해지지 않는다. 조각마다 레이어를 다시 그리면 무거우니
+  // requestAnimationFrame으로 한 프레임에 한 번만 모아서 처리한다.
+  const hlRebuildRef = useRef<{ raf: number | null; layers: Set<string> }>({ raf: null, layers: new Set() });
+  const scheduleHighlighterRebuild = (layerId: string) => {
+    const st = hlRebuildRef.current;
+    st.layers.add(layerId);
+    if (st.raf !== null) return;
+    st.raf = requestAnimationFrame(() => {
+      st.raf = null;
+      const targets = [...st.layers]; st.layers.clear();
+      targets.forEach(rebuildLayer);
+      composite();
+    });
+  };
+  useEffect(() => () => { const st = hlRebuildRef.current; if (st.raf !== null) cancelAnimationFrame(st.raf); }, []);
+
   // 원격 델타가 모르는 레이어를 가리키면 생성 (기기 간 레이어 자동 전파)
   const ensureLayer = (layerId: string) => {
     if (layersRef.current.some((l) => l.id === layerId)) return;
@@ -465,14 +482,18 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       }
       stroke.segs.push({ from: delta.from, to: delta.to, width: delta.width });
       if (pageOf(stroke) === pageIndexRef.current) {
-        const ctx = getLayerCanvas(stroke.layerId).getContext('2d');
-        if (ctx) renderInkSegment(ctx, delta);
-        composite();
+        if (delta.penType === 'highlighter') {
+          scheduleHighlighterRebuild(stroke.layerId); // 획 전체를 1회 stroke로 다시 그림
+        } else {
+          const ctx = getLayerCanvas(stroke.layerId).getContext('2d');
+          if (ctx) renderInkSegment(ctx, delta);
+          composite();
+        }
       } else if (scrollModeRef.current) {
         // 연속 스크롤: 다른 페이지의 원격 획도 그 페이지 정적 캔버스에 바로 보이게.
         // (지우개는 레이어 시맨틱 보존을 위해 전체 정적 재렌더)
         const sctx = pageCanvasElsRef.current.get(pageOf(stroke))?.getContext('2d');
-        if (delta.penType !== 'eraser' && sctx) renderInkSegment(sctx, delta);
+        if (delta.penType !== 'eraser' && delta.penType !== 'highlighter' && sctx) renderInkSegment(sctx, delta);
         else renderStaticPage(pageOf(stroke));
       }
       // (플립 모드) 다른 페이지 획은 모델에만 쌓이고 그 페이지로 넘어갈 때 렌더된다.

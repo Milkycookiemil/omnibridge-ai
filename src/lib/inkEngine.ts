@@ -255,6 +255,35 @@ type SmoothStrokeLike = {
 export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: SmoothStrokeLike) {
   const segs = stroke.segs;
   if (!segs.length) return;
+  // 형광펜: 획 전체를 '하나의 경로'로 만들어 딱 한 번만 stroke() 한다.
+  //  - 같은 획 안에서 겹쳐도 곱해지지 않아 진해지지 않는다(펜을 떼고 다시 그으면 그때 겹쳐 진해짐).
+  //  - 조각별로 따로 칠할 때 생기던 이음새·각짐도 사라진다(joins은 둥글게, 양 끝만 납작).
+  if (stroke.penType === 'highlighter' && segs.length >= 1) {
+    const pts = [segs[0].from, ...segs.map((s) => s.to)];
+    const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = stroke.opacity;
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = segs[0].width; // 형광펜은 굵기 일정(필압 무시)
+    ctx.lineCap = 'butt';          // 마커처럼 양 끝은 납작
+    ctx.lineJoin = 'round';        // 꺾이는 곳은 둥글게 → 각짐 제거
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    if (pts.length === 2) {
+      ctx.lineTo(pts[1].x, pts[1].y);
+    } else {
+      ctx.lineTo(mid(pts[0], pts[1]).x, mid(pts[0], pts[1]).y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const m1 = mid(pts[i], pts[i + 1]);
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, m1.x, m1.y);
+      }
+      ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   if (stroke.penType === 'highlighter' || stroke.penType === 'eraser' || segs.length < 2) {
     for (const s of segs) {
       renderInkSegment(ctx, {
