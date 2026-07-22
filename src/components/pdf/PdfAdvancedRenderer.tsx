@@ -9,6 +9,7 @@ import { usePreferences } from '../../lib/preferences';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, cursorForPen,
   snapLineEnd, recognizeShape, shapeToPoints, pointInPolygon, distancePointToSegment,
+  DEFAULT_PENS,
   type InkSegment, type PenModel, type PenType,
 } from '../../lib/inkEngine';
 // 페이지별 비율좌표(0~1) 저장 구조 — 노트 영속화를 위해 공용 모듈에서 가져온다.
@@ -32,6 +33,7 @@ interface PdfPageProps {
   pageNumber: number;
   pdfDocument: pdfjsLib.PDFDocumentProxy;
   pen: PenModel;
+  eraserPen?: PenModel; // S펜 사이드 버튼 눌림 시 쓸 지우개
   scale: number;
   searchText: string;
   highlightedIndexes: { pageIndex: number, matchIndex: number, textIndex: number }[];
@@ -55,7 +57,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   highlightedIndexes, currentMatchIndex, onPageMatchCalculated,
   initialStrokes, onStrokesChange, straightLine = false, shapeMode = false,
   selectMode = false, registerHandle, onHistoryChange, strokeTime, onStrokeTap,
-  displayWidth, nav,
+  displayWidth, nav, eraserPen,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -72,6 +74,10 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const { touchDraw } = usePreferences();
   const touchDrawRef = useRef(touchDraw); touchDrawRef.current = touchDraw;
   const fingerCanDraw = () => touchDrawRef.current && !penModeRef.current;
+  // S펜 사이드 버튼(buttons&2)·펜 뒤집기(buttons&32)를 누른 채 그리면 그 획만 지우개(삼성노트식).
+  const barrelRef = useRef(false);
+  const isBarrelPressed = (e: React.PointerEvent) => e.pointerType === 'pen' && (e.buttons & (2 | 32)) !== 0;
+  const getPen = (): PenModel => (barrelRef.current ? (eraserPen ?? DEFAULT_PENS.eraser) : pen);
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<null | { startDist: number; startZoom: number; lastMid: { x: number; y: number } }>(null);
   const panRef = useRef<null | { lastX: number; lastY: number }>(null);
@@ -106,7 +112,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const currentStrokeRef = useRef<PageStroke | null>(null);
   const lastRatioRef = useRef<InkPoint | null>(null);
   const gestureRef = useRef<InkPoint[] | null>(null); // #4 자/도형 제스처(비율좌표)
-  const isGestureMode = () => (straightLine || shapeMode) && pen.type !== 'eraser';
+  const isGestureMode = () => (straightLine || shapeMode) && getPen().type !== 'eraser';
 
   // ===== undo/redo (스냅샷 기반) =====
   const undoStackRef = useRef<PageStroke[][]>([]);
@@ -393,7 +399,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
     const sf = dCanvas.width / (dCanvas.getBoundingClientRect().width || dCanvas.width);
     redrawStrokes();
     ctx.save();
-    ctx.globalAlpha = pen.opacity; ctx.strokeStyle = pen.color; ctx.lineWidth = widthForPressure(pen, 0.5) * sf;
+    const gp = getPen();
+    ctx.globalAlpha = gp.opacity; ctx.strokeStyle = gp.color; ctx.lineWidth = widthForPressure(gp, 0.5) * sf;
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.beginPath();
     if (straightLine) {
@@ -496,7 +503,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.pointerType === 'pen') markPen();
+    if (e.pointerType === 'pen') { markPen(); barrelRef.current = isBarrelPressed(e); } // 사이드 버튼 = 이 획만 지우개
     if (e.pointerType === 'touch') {
       activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
@@ -510,10 +517,11 @@ const PdfPage: React.FC<PdfPageProps> = ({
     isDrawingRef.current = true;
     if (isGestureMode()) { gestureRef.current = [ratio]; return; }
     lastRatioRef.current = ratio;
+    const sp = getPen(); // 사이드 버튼 눌림이면 지우개
     currentStrokeRef.current = {
-      penType: pen.type,
-      color: pen.color,
-      opacity: pen.opacity,
+      penType: sp.type,
+      color: sp.color,
+      opacity: sp.opacity,
       segs: [],
     };
   };
@@ -537,12 +545,13 @@ const PdfPage: React.FC<PdfPageProps> = ({
     // 표시 px 굵기를 내부 해상도 px로 환산해 저장 (CSS 축소 보정)
     const sf = dCanvas.width / (dCanvas.getBoundingClientRect().width || dCanvas.width);
     const ctx = dCanvas.getContext('2d');
+    const dp = getPen(); // 사이드 버튼 눌림이면 지우개
     // 마우스는 pressure=0 → inkEngine에서 0.5로 폴백. S펜/애플펜슬은 각 점의 실제 필압.
     for (const p of pts) {
       const from = lastRatioRef.current;
       const to = { x: p.x, y: p.y };
       if (!from) { lastRatioRef.current = to; continue; }
-      const width = widthForPressure(pen, p.pressure) * sf;
+      const width = widthForPressure(dp, p.pressure) * sf;
       const seg: PageInkSeg = { from, to, width };
       currentStrokeRef.current.segs.push(seg);
       // 성능을 위해 전체 재렌더 대신 델타 한 조각만 그린다.
@@ -563,14 +572,14 @@ const PdfPage: React.FC<PdfPageProps> = ({
       // 손가락 사용자 그리기 종료 → 아래로 진행
     }
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
-    if (selectMode) { selectUp(); return; }
+    if (selectMode) { barrelRef.current = false; selectUp(); return; }
     // #4 자/도형 제스처 확정
     if (gestureRef.current) {
       const pts = gestureRef.current; gestureRef.current = null; isDrawingRef.current = false;
       const dCanvas = drawingCanvasRef.current;
       if (pts.length < 2 || !dCanvas || !dimensions.width) { redrawStrokes(); return; }
       const sf = dCanvas.width / (dCanvas.getBoundingClientRect().width || dCanvas.width);
-      const width = widthForPressure(pen, 0.5) * sf;
+      const width = widthForPressure(getPen(), 0.5) * sf;
       const W = dimensions.width, H = dimensions.height;
       let ratioPts: InkPoint[];
       if (straightLine) {
@@ -582,9 +591,11 @@ const PdfPage: React.FC<PdfPageProps> = ({
       }
       const segs: PageInkSeg[] = [];
       for (let i = 1; i < ratioPts.length; i++) segs.push({ from: ratioPts[i - 1], to: ratioPts[i], width });
-      const stroke: PageStroke = { penType: pen.type, color: pen.color, opacity: pen.opacity, segs };
+      const ep = getPen();
+      const stroke: PageStroke = { penType: ep.type, color: ep.color, opacity: ep.opacity, segs };
       const gt = strokeTime?.(); if (gt !== undefined) stroke.t = gt;
       commit([...strokesRef.current, stroke]);
+      barrelRef.current = false;
       return;
     }
     // 스트로크를 지역변수로 먼저 캡처. (업데이터 안에서 ref를 읽으면 아래 null 대입 후
@@ -597,6 +608,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
     currentStrokeRef.current = null;
     lastRatioRef.current = null;
     isDrawingRef.current = false;
+    barrelRef.current = false; // 획이 끝나면 원래 펜으로 복귀
   };
 
   return (
@@ -683,6 +695,7 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   strokeTime?: () => number | undefined; // P1 녹음 시각 스탬프
   onStrokeTap?: (t: number) => void;     // P1 역방향: 획 탭 → 전사 점프
   recordSlot?: React.ReactNode;          // PDF 헤더에 넣을 녹음 버튼
+  eraserPen?: PenModel;                  // S펜 사이드 버튼 눌림 시 쓸 지우개
   initialBookmarks?: number[];           // 저장된 북마크 페이지 복원용
   onBookmarksChange?: (bm: number[]) => void; // 북마크 변경 알림(저장용)
 }>(({
@@ -699,6 +712,7 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   recordSlot,
   initialBookmarks,
   onBookmarksChange,
+  eraserPen,
 }, ref) => {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -1086,6 +1100,7 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
                onStrokeTap={onStrokeTap}
                displayWidth={displayWidth}
                nav={navRef.current}
+               eraserPen={eraserPen}
              />
          ))}
         </div>

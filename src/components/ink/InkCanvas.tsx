@@ -16,6 +16,7 @@ import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, distancePointToSegment, cursorForPen,
   pointInPolygon, strokePoints, strokeBounds, translateStroke, scaleStroke,
   snapLineEnd, recognizeShape, shapeToPoints,
+  DEFAULT_PENS,
   type InkDelta, type InkSegment, type InkStroke, type InkLayer, type PenModel,
 } from '../../lib/inkEngine';
 import { LayerPanel } from './LayerPanel';
@@ -38,6 +39,7 @@ export interface InkCanvasHandle {
 
 interface InkCanvasProps {
   pen: PenModel;
+  eraserPen?: PenModel; // S펜 사이드 버튼을 누른 동안 쓸 지우개(없으면 기본 지우개)
   width?: number;
   height?: number;
   className?: string;
@@ -64,7 +66,7 @@ type DragState =
   | { mode: 'scale'; handle: Handle; baseBox: SelBox };
 
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
-  { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap, controlsBottomInset = 0, onStructureChange },
+  { pen, eraserPen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap, controlsBottomInset = 0, onStructureChange },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -277,6 +279,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   //  · 펜을 안 쓰는 사용자: 1손가락 = 그리기, 2손가락 = 핀치 줌 + 팬.
   const penModeRef = useRef(false);
   const markPen = () => { penModeRef.current = true; };
+  // S펜 사이드 버튼(barrel, buttons&2)이나 펜 뒤집기(eraser tip, buttons&32)를 누른 채 그리면
+  // 그 획 동안만 지우개로 동작한다(삼성노트식 빠른 지우기). 떼면 원래 펜으로 자동 복귀.
+  const barrelRef = useRef(false);
+  const isBarrelPressed = (e: React.PointerEvent) => e.pointerType === 'pen' && (e.buttons & (2 | 32)) !== 0;
+  const getPen = (): PenModel => (barrelRef.current ? (eraserPen ?? DEFAULT_PENS.eraser) : pen);
   // 화면에 닿아있는 손가락(touch) 위치 — 핀치 거리/중점 계산용.
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<null | { startDist: number; startZoom: number; lastMid: { x: number; y: number } }>(null);
@@ -454,7 +461,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   // --- 획 지우개: 히트테스트 → 스트로크 통째 삭제 ---
   const eraseStrokesAt = (p: { x: number; y: number }) => {
-    const threshold = Math.max(pen.baseWidth, 12);
+    const threshold = Math.max(getPen().baseWidth, 12);
     const hit: string[] = [];
     for (const stroke of strokesRef.current.values()) {
       // 활성 레이어의 실제 잉크만 대상 (영역 지우개 자국은 히트 제외) + 현재 페이지만
@@ -709,7 +716,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }));
   };
 
-  const isStrokeEraser = () => pen.type === 'eraser' && (pen.eraserMode ?? 'area') === 'stroke';
+  const isStrokeEraser = () => { const p = getPen(); return p.type === 'eraser' && (p.eraserMode ?? 'area') === 'stroke'; };
 
   // ===== 올가미 선택/변형 =====
   const emitStrokeSegs = (st: InkStroke) => {
@@ -892,13 +899,14 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   // ===== #4 자(직선)/도형 보정 제스처 (놓을 때 한 번에 확정) =====
-  const isGesture = () => (straightLine || shapeMode) && pen.type !== 'eraser';
+  const isGesture = () => (straightLine || shapeMode) && getPen().type !== 'eraser';
   const buildStrokeFromPoints = (pts: { x: number; y: number }[]): InkStroke | null => {
     if (pts.length < 2) return null;
-    const w = widthForPressure(pen, 0.5);
+    const p = getPen();
+    const w = widthForPressure(p, 0.5);
     const segs = [];
     for (let i = 1; i < pts.length; i++) segs.push({ from: { ...pts[i - 1] }, to: { ...pts[i] }, width: w });
-    return { id: genId(), layerId: activeLayerRef.current, penType: pen.type, color: pen.color, opacity: pen.opacity, segs, page: pageIndexRef.current };
+    return { id: genId(), layerId: activeLayerRef.current, penType: p.type, color: p.color, opacity: p.opacity, segs, page: pageIndexRef.current };
   };
   const commitGestureStroke = (stroke: InkStroke) => {
     const t = strokeTime?.(); if (t !== undefined) stroke.t = t;
@@ -913,7 +921,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     const ctx = getActiveCanvas()?.getContext('2d'); const pts = gestureRef.current;
     if (!ctx || !pts || pts.length < 1) return;
     ctx.save();
-    ctx.globalAlpha = pen.opacity; ctx.strokeStyle = pen.color; ctx.lineWidth = widthForPressure(pen, 0.5);
+    const gp = getPen();
+    ctx.globalAlpha = gp.opacity; ctx.strokeStyle = gp.color; ctx.lineWidth = widthForPressure(gp, 0.5);
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.beginPath();
     if (straightLine) {
@@ -927,7 +936,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.pointerType === 'pen') markPen();
+    if (e.pointerType === 'pen') { markPen(); barrelRef.current = isBarrelPressed(e); } // 사이드 버튼 = 이 획만 지우개
     if (e.pointerType === 'touch') {
       activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
@@ -973,15 +982,16 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     }
 
     // 마우스는 pressure=0 → inkEngine에서 0.5로 폴백. 펜은 각 coalesced 점의 실제 필압 사용.
+    const dp = getPen(); // 사이드 버튼 눌림이면 지우개
     for (const p of pts) {
       const from = lastRef.current;
       if (!from) { lastRef.current = { x: p.x, y: p.y }; continue; }
       const seg: InkSegment = {
         from, to: { x: p.x, y: p.y },
-        penType: pen.type,
-        color: pen.color,
-        width: widthForPressure(pen, p.pressure),
-        opacity: pen.opacity,
+        penType: dp.type,
+        color: dp.color,
+        width: widthForPressure(dp, p.pressure),
+        opacity: dp.opacity,
         strokeId: currentStrokeIdRef.current ?? genId(),
         layerId: activeLayerRef.current,
         page: pageIndexRef.current,
@@ -1006,7 +1016,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       // 손가락 사용자 그리기 종료 → 아래로 진행
     }
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
-    if (selectMode) { handleSelectUp(); return; }
+    if (selectMode) { barrelRef.current = false; handleSelectUp(); return; }
 
     // #4 제스처(자/도형) 확정
     if (gestureRef.current) {
@@ -1020,6 +1030,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
         stroke = buildStrokeFromPoints(shape ? shapeToPoints(shape) : pts);
       }
       if (stroke) commitGestureStroke(stroke); else composite();
+      barrelRef.current = false;
       return;
     }
 
@@ -1035,6 +1046,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     lastRef.current = null;
     currentStrokeIdRef.current = null;
     if (finishedLayer) { rebuildLayer(finishedLayer); composite(); }
+    barrelRef.current = false; // 획이 끝나면 원래 펜으로 복귀
     if (finishedId) {
       const st = strokesRef.current.get(finishedId);
       if (st) {

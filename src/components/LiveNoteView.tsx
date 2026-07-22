@@ -221,7 +221,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   };
 
   // 펜 상태(5종 + 활성 펜) & 캔버스 핸들
-  const { activeType, activePen, setActiveType, updateActivePen } = usePenState('pen');
+  const { pens, activeType, activePen, setActiveType, updateActivePen } = usePenState('pen');
   const inkRef = useRef<InkCanvasHandle>(null);
   const pdfRef = useRef<PdfRendererHandle>(null);
 
@@ -550,6 +550,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
 
   const inkCanvas = (
     <InkCanvas
+      eraserPen={pens.eraser}
       ref={inkRef}
       pen={activePen}
       width={noteDims.w}
@@ -576,6 +577,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
 
       {paperStyle === 'pdf' && (
         <PdfAdvancedRenderer
+           eraserPen={pens.eraser}
            ref={pdfRef}
            fileUrl={pdfUrl}
            fileName={fileName || 'Document.pdf'}
