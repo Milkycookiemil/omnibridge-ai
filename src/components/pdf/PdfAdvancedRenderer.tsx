@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes, Minus, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import { QuickColorPalette } from '../ink/QuickColorPalette';
@@ -12,6 +12,17 @@ import {
 } from '../../lib/inkEngine';
 // 페이지별 비율좌표(0~1) 저장 구조 — 노트 영속화를 위해 공용 모듈에서 가져온다.
 import type { InkPoint, PageInkSeg, PageStroke, PdfPageStrokes } from '../../lib/pdfInk';
+
+// PDF 줌/팬 내비게이션 — 부모(스크롤 컨테이너 + pdfZoom state)가 실제 동작을 담당하고,
+// 각 페이지의 드로잉 캔버스는 손가락 제스처를 감지해 이 핸들로 위임한다.
+interface PdfNav {
+  getZoom: () => number;
+  // 손가락 중점(midX,midY, client좌표)을 고정한 채 target 배율로 줌 + 중점 이동만큼 팬.
+  setZoomAt: (target: number, midX: number, midY: number, panDx: number, panDy: number) => void;
+  panBy: (dx: number, dy: number) => void;
+  ZOOM_MIN: number;
+  ZOOM_MAX: number;
+}
 
 // Initialize worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -35,6 +46,8 @@ interface PdfPageProps {
   onHistoryChange?: (page: number, s: { canUndo: boolean; canRedo: boolean }) => void;
   strokeTime?: () => number | undefined;   // P1 녹음 중이면 획에 찍을 경과 초
   onStrokeTap?: (t: number) => void;       // P1 역방향: 시각 있는 획 탭 → 전사 점프
+  displayWidth?: number;                    // 줌 반영 표시 폭(px). 0/undefined면 w-full+maxWidth 폴백.
+  nav?: PdfNav;                             // 핀치 줌/팬 위임 핸들
 }
 
 const PdfPage: React.FC<PdfPageProps> = ({
@@ -42,6 +55,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   highlightedIndexes, currentMatchIndex, onPageMatchCalculated, onVisible,
   initialStrokes, onStrokesChange, straightLine = false, shapeMode = false,
   selectMode = false, registerHandle, onHistoryChange, strokeTime, onStrokeTap,
+  displayWidth, nav,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -49,11 +63,35 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const textLayerRef = useRef<HTMLDivElement>(null);
   // 드로잉 진행 여부는 ref로 관리 — 합성/연속 pointer 이벤트에서 state 지연 없이 즉시 반영
   const isDrawingRef = useRef(false);
-  // 팜리젝션(스타일러스 우선): 펜 감지 후 손가락(touch)은 그리지 않고 스크롤로 넘긴다.
-  const [penMode, setPenMode] = useState(false);
+  // 팜리젝션(스타일러스 우선) + 멀티터치 내비(핀치 줌·팬). 캔버스는 touch-action:none로 손가락 제스처를 직접 처리.
+  //  · 펜 사용자(penMode): 1손가락=팬, 2손가락=핀치 줌+팬 (손가락은 그리지 않음).
+  //  · 손가락 사용자: 1손가락=그리기, 2손가락=핀치 줌+팬.
   const penModeRef = useRef(false);
-  const markPen = () => { if (!penModeRef.current) { penModeRef.current = true; setPenMode(true); } };
-  const isRejectedTouch = (e: React.PointerEvent) => e.pointerType === 'touch' && penModeRef.current;
+  const markPen = () => { penModeRef.current = true; };
+  const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<null | { startDist: number; startZoom: number; lastMid: { x: number; y: number } }>(null);
+  const panRef = useRef<null | { lastX: number; lastY: number }>(null);
+  const touchNavRef = useRef(false);
+  const touchList = () => [...activeTouchesRef.current.values()];
+  const tDist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const tMid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const startPinch = () => {
+    const pts = touchList(); if (pts.length < 2 || !nav) return;
+    touchNavRef.current = true; panRef.current = null;
+    pinchRef.current = { startDist: tDist(pts[0], pts[1]) || 1, startZoom: nav.getZoom(), lastMid: tMid(pts[0], pts[1]) };
+  };
+  const updatePinch = () => {
+    const pts = touchList(); const st = pinchRef.current; if (pts.length < 2 || !st || !nav) return;
+    const nd = tDist(pts[0], pts[1]); const nm = tMid(pts[0], pts[1]);
+    const target = Math.min(nav.ZOOM_MAX, Math.max(nav.ZOOM_MIN, st.startZoom * (nd / st.startDist)));
+    nav.setZoomAt(target, nm.x, nm.y, nm.x - st.lastMid.x, nm.y - st.lastMid.y);
+    st.lastMid = nm;
+  };
+  // 손가락 그리기 중 두 번째 손가락 → 내비로 전환하며 진행 중이던(미커밋) 획을 폐기.
+  const cancelCurrentStroke = () => {
+    gestureRef.current = null; currentStrokeRef.current = null; lastRatioRef.current = null; isDrawingRef.current = false;
+    redrawStrokes();
+  };
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [matches, setMatches] = useState<{textIndex: number, rect: any}[]>([]);
   const [hasText, setHasText] = useState<boolean | null>(null);
@@ -386,7 +424,13 @@ const PdfPage: React.FC<PdfPageProps> = ({
 
   const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === 'pen') markPen();
-    if (isRejectedTouch(e)) return; // 팜리젝션: 손가락은 그리지 않고 스크롤(touch-action)로 넘김
+    if (e.pointerType === 'touch') {
+      activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
+      if (activeTouchesRef.current.size >= 2) { cancelCurrentStroke(); startPinch(); return; } // 2손가락 = 핀치 줌/팬
+      if (penModeRef.current) { touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; } // 펜모드 1손가락 = 팬
+      // 손가락 사용자 1손가락 = 그리기 → 아래로 진행
+    }
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
     const ratio = getCoordinatesRatio(e);
     if (selectMode) { selectDown(ratio); return; }
@@ -402,7 +446,13 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isRejectedTouch(e)) return; // 팜리젝션
+    if (e.pointerType === 'touch') {
+      if (activeTouchesRef.current.has(e.pointerId)) activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinchRef.current && activeTouchesRef.current.size >= 2) { updatePinch(); return; }
+      if (panRef.current && penModeRef.current && nav) { nav.panBy(e.clientX - panRef.current.lastX, e.clientY - panRef.current.lastY); panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; }
+      if (penModeRef.current || touchNavRef.current) return; // 펜모드 손가락/내비 중 → 그리기 안 함
+      // 손가락 사용자 1손가락 그리기 → 아래로 진행
+    }
     if (selectMode) { if (selDragRef.current) selectMove(getCoordinatesRatio(e)); return; }
     if (!isDrawingRef.current) return;
     if (gestureRef.current) { gestureRef.current.push(getCoordinatesRatio(e)); drawGesturePreviewPdf(); return; }
@@ -427,7 +477,16 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
 
   const stopDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isRejectedTouch(e)) return; // 팜리젝션
+    if (e.pointerType === 'touch') {
+      const wasNav = penModeRef.current || pinchRef.current !== null || panRef.current !== null || touchNavRef.current;
+      activeTouchesRef.current.delete(e.pointerId);
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+      if (activeTouchesRef.current.size < 2) pinchRef.current = null;
+      if (activeTouchesRef.current.size === 0) { panRef.current = null; touchNavRef.current = false; }
+      else if (penModeRef.current && activeTouchesRef.current.size === 1) { const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y }; }
+      if (wasNav) return;
+      // 손가락 사용자 그리기 종료 → 아래로 진행
+    }
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     if (selectMode) { selectUp(); return; }
     // #4 자/도형 제스처 확정
@@ -468,8 +527,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
   return (
     <div
       ref={containerRef}
-      className="pdf-page relative mb-6 shadow-sm border border-slate-200 bg-white mx-auto w-full"
-      style={{ maxWidth: 820, aspectRatio: dimensions.width ? `${dimensions.width} / ${dimensions.height}` : '612 / 792' }}
+      className={cn('pdf-page relative mb-6 shadow-sm border border-slate-200 bg-white mx-auto shrink-0', !displayWidth && 'w-full')}
+      style={{ width: displayWidth || undefined, maxWidth: displayWidth ? undefined : 820, aspectRatio: dimensions.width ? `${dimensions.width} / ${dimensions.height}` : '612 / 792' }}
     >
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full z-0 bg-white" />
 
@@ -492,8 +551,9 @@ const PdfPage: React.FC<PdfPageProps> = ({
         onPointerDown={startDraw}
         onPointerMove={draw}
         onPointerUp={stopDraw}
+        onPointerCancel={stopDraw}
         onPointerLeave={stopDraw}
-        className={cn('absolute inset-0 w-full h-full z-20', penMode ? '[touch-action:pan-x_pan-y]' : 'touch-none')}
+        className="absolute inset-0 w-full h-full touch-none z-20"
         style={{ cursor: selectMode ? 'crosshair' : cursorForPen(pen) }}
       />
 
@@ -572,9 +632,40 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
     if (h) pageHandlesRef.current.set(page, h); else pageHandlesRef.current.delete(page);
   };
   const onPageHistory = (page: number, s: { canUndo: boolean; canRedo: boolean }) => setPageHist((prev) => ({ ...prev, [page]: s }));
-  // 고정 렌더 해상도. 표시 크기는 CSS(w-full + aspect-ratio)가 컨테이너 너비에 맞춰 축소한다.
+  // 고정 렌더 해상도. 표시 크기는 displayWidth(줌 반영)로 조절한다.
   const [scale] = useState(2);
-  
+
+  // ── PDF 줌 (버튼·Ctrl+휠·2손가락 핀치) ─────────────────────────────
+  const PDF_ZOOM_MIN = 0.5, PDF_ZOOM_MAX = 4;
+  const [pdfZoom, setPdfZoom] = useState(1);
+  const pdfZoomRef = useRef(1); pdfZoomRef.current = pdfZoom;
+  const [baseWidth, setBaseWidth] = useState(0); // 줌 100% 기준 표시 폭(px) = min(컨테이너폭-패딩, 820)
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
+  const clampPdfZoom = (z: number) => Math.min(PDF_ZOOM_MAX, Math.max(PDF_ZOOM_MIN, Math.round(z * 1000) / 1000));
+  const setPdfZoomClamped = (z: number | ((p: number) => number)) =>
+    setPdfZoom((prev) => clampPdfZoom(typeof z === 'function' ? z(prev) : z));
+  // 손가락 중점/커서를 고정한 채 줌 + 팬. 줌 변화가 미미하면 순수 팬(리렌더 없이 스크롤만).
+  const setZoomAt = (target: number, midX: number, midY: number, panDx: number, panDy: number) => {
+    const el = containerRef.current; if (!el) return;
+    const cur = pdfZoomRef.current;
+    const t = clampPdfZoom(target);
+    const f = t / cur;
+    const rect = el.getBoundingClientRect();
+    const cx = midX - rect.left, cy = midY - rect.top;
+    const left = (el.scrollLeft + cx) * f - cx - panDx;
+    const top = (el.scrollTop + cy) * f - cy - panDy;
+    if (Math.abs(f - 1) < 0.0015) { el.scrollLeft = Math.max(0, left); el.scrollTop = Math.max(0, top); }
+    else { pendingScrollRef.current = { left, top }; setPdfZoom(t); }
+  };
+  const navRef = useRef<PdfNav>({ getZoom: () => 1, setZoomAt, panBy: () => {}, ZOOM_MIN: PDF_ZOOM_MIN, ZOOM_MAX: PDF_ZOOM_MAX });
+  navRef.current = {
+    getZoom: () => pdfZoomRef.current,
+    setZoomAt,
+    panBy: (dx, dy) => { const el = containerRef.current; if (el) { el.scrollLeft -= dx; el.scrollTop -= dy; } },
+    ZOOM_MIN: PDF_ZOOM_MIN, ZOOM_MAX: PDF_ZOOM_MAX,
+  };
+  const displayWidth = baseWidth ? baseWidth * pdfZoom : 0;
+
   const [searchText, setSearchText] = useState("");
   const [allMatches, setAllMatches] = useState<{pageIndex: number, matches: any[]}[]>([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
@@ -670,6 +761,35 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
      }
   }, [searchText]);
 
+  // 줌 100% 기준 표시 폭 측정(컨테이너 폭 - 좌우 패딩 48px, 최대 820).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => setBaseWidth(Math.max(0, Math.min(el.clientWidth - 48, 820)));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pdfDoc]);
+
+  // 핀치/휠 줌으로 페이지가 리사이즈된 직후, 중점을 고정하도록 스크롤 보정.
+  useLayoutEffect(() => {
+    const p = pendingScrollRef.current; const el = containerRef.current;
+    if (p && el) { el.scrollLeft = Math.max(0, p.left); el.scrollTop = Math.max(0, p.top); pendingScrollRef.current = null; }
+  }, [pdfZoom]);
+
+  // Ctrl/⌘ + 휠 = 커서 기준 줌. React onWheel은 passive라 preventDefault가 안 되므로 네이티브(비패시브)로 등록.
+  useEffect(() => {
+    const el = containerRef.current; if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      setZoomAt(pdfZoomRef.current * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX, e.clientY, 0, 0);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [pdfDoc]);
+
   if (!pdfDoc) {
      return (
          <div className="absolute inset-0 flex items-center justify-center bg-slate-50 opacity-80 backdrop-blur z-0 rounded-md border border-slate-200">
@@ -746,8 +866,9 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
            className={cn("p-2 rounded-lg transition-colors", shapeMode ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}><Shapes className="w-5 h-5" /></button>
       </div>
 
-      {/* Scrollable Document Area */}
-      <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center bg-slate-100 custom-scrollbar" ref={containerRef}>
+      {/* Scrollable Document Area — 줌 시 가로 스크롤(overflow-auto) + w-max 래퍼로 좌우 대칭 스크롤 보장 */}
+      <div className="flex-1 overflow-auto p-6 bg-slate-100 custom-scrollbar" ref={containerRef}>
+        <div className="min-w-full w-max mx-auto flex flex-col items-center">
          {Array.from({ length: numPages }, (_, i) => (
              <PdfPage
                key={i}
@@ -769,8 +890,18 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
                onHistoryChange={onPageHistory}
                strokeTime={strokeTime}
                onStrokeTap={onStrokeTap}
+               displayWidth={displayWidth}
+               nav={navRef.current}
              />
          ))}
+        </div>
+      </div>
+
+      {/* 확대/축소 컨트롤 (100% = 화면 맞춤). Ctrl/⌘+휠·2손가락 핀치로도 조절. 우하단. */}
+      <div className="absolute bottom-4 right-4 z-40 flex items-center gap-0.5 bg-white/95 backdrop-blur border border-slate-200 rounded-full shadow-md px-1 py-1 select-none">
+        <button onClick={() => setPdfZoomClamped((z) => z / 1.25)} title="축소" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={pdfZoom <= PDF_ZOOM_MIN}><Minus className="w-4 h-4" /></button>
+        <button onClick={() => setPdfZoom(1)} title="100%로 맞춤" className="text-xs font-bold text-slate-700 w-12 tabular-nums hover:text-violet-600">{Math.round(pdfZoom * 100)}%</button>
+        <button onClick={() => setPdfZoomClamped((z) => z * 1.25)} title="확대" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={pdfZoom >= PDF_ZOOM_MAX}><Plus className="w-4 h-4" /></button>
       </div>
     </div>
   );
