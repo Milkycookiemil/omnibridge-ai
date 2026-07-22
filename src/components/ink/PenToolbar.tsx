@@ -2,7 +2,7 @@
 // A-1 + 삼성노트 스타일 툴바(5종 아이콘) + 활성 펜 팝오버.
 // 팝오버: 펜촉 종류 선택 + 획 미리보기 + 굵기/투명도/필압 + 지우개 모드 + 색상(6프리셋 + '상세').
 // '상세'는 툴바 퀵 팔레트와 '동일한' ColorDetailPicker를 연다(고급 색 선택기 단일화). 낡은 256격자·중복 네이티브 입력은 제거.
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pen, Pencil, Brush, Highlighter, Eraser, Palette } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PEN_COLORS, HIGHLIGHTER_COLORS, PEN_META, type PenModel, type PenType } from '../../lib/inkEngine';
@@ -66,6 +66,25 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
   const [detailOrig, setDetailOrig] = useState('#000000');
 
   const openPopover = (v: boolean) => { setPopoverOpen(v); onOpenChange?.(v); };
+
+  // 바깥 탭으로 닫기: 헤더의 backdrop-filter 때문에 'fixed inset-0' 배경이 헤더 영역으로
+  // 축소돼 노트를 덮지 못했다(그래서 노트를 눌러도 안 닫히고 획만 그려짐).
+  // → 쌓임 순서와 무관하게 document 캡처 단계에서 바깥 포인터를 가로채 닫고, 그 입력은
+  //   캔버스로 내려보내지 않는다(닫으려다 획이 그려지는 것 방지).
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!popoverOpen || !popoverTapClose) return;
+    const onDown = (e: PointerEvent) => {
+      const root = rootRef.current;
+      if (root && root.contains(e.target as Node)) return; // 툴바·팝오버 내부는 그대로
+      e.preventDefault();
+      e.stopPropagation();
+      openPopover(false);
+      setDetailOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [popoverOpen, popoverTapClose]);
   const handlePick = (t: PenType) => {
     if (t === activeType) {
       openPopover(!popoverOpen); // 활성 펜 재탭 → 팝오버 토글
@@ -80,7 +99,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
   const palette = activeType === 'highlighter' ? HIGHLIGHTER_COLORS : PEN_COLORS;
 
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
       <div className="flex gap-1 items-center">
         {ORDER.map((t) => {
           const Icon = PEN_ICONS[t];
@@ -112,8 +131,6 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
       {/* 팝오버 (삼성노트 스타일) — 펜 물성만 */}
       {popoverOpen && (
         <>
-          {/* 바깥 탭으로 닫기(설정). 끄면 배경을 두지 않아 팝오버를 연 채로 필기할 수 있다. */}
-          {popoverTapClose && <div className="fixed inset-0 z-20" onClick={() => { openPopover(false); setDetailOpen(false); }} />}
           <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 z-30 max-h-[80vh] overflow-y-auto">
             {/* 헤더: 실사풍 펜촉으로 종류 선택 */}
             <div className="flex items-end justify-around gap-1 px-1 pt-1 pb-2 border-b border-slate-100">

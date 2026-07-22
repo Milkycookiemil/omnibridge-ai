@@ -13,7 +13,7 @@
 //  - touch-action:none + user-select/touch-callout 차단으로 스크롤·텍스트선택·iOS 콜아웃 억제.
 //  - Android는 길게 누르면 자체 contextmenu(≈500ms)를 먼저 쏨 → 그 경로도 저장으로 처리(중복 없음).
 //  - 히트 영역: 각 버튼 44px(시각 스와치 20px + 여유) 확보.
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Palette, ChevronDown } from 'lucide-react';
 import { usePreferences } from '../../lib/preferences';
 import { cn } from '../../lib/utils';
@@ -71,6 +71,21 @@ export function QuickColorPalette({ activeColor, onPick, onOpenChange }: QuickCo
     }
   };
 
+  // 바깥 탭으로 닫기 — PenToolbar와 동일한 이유로 document 캡처 단계에서 처리한다.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (detailFor === null || !popoverTapClose) return;
+    const onDown = (e: PointerEvent) => {
+      const root = rootRef.current;
+      if (root && root.contains(e.target as Node)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDetailFor(null);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [detailFor, popoverTapClose]);
+
   const openFreePalette = () => {
     if (detailFor === 'free') { setDetailFor(null); return; }
     setDetailOrig(activeColor);
@@ -85,7 +100,7 @@ export function QuickColorPalette({ activeColor, onPick, onOpenChange }: QuickCo
   };
 
   return (
-    <div className="relative flex items-center gap-0.5" title="퀵 색상 · 탭=적용 / 활성 스와치 재탭=상세 / 길게=현재 색 저장">
+    <div className="relative flex items-center gap-0.5" ref={rootRef} title="퀵 색상 · 탭=적용 / 활성 스와치 재탭=상세 / 길게=현재 색 저장">
       {favoriteColors.map((c, i) => {
         const isActive = detailFor === i || eq(activeColor, c);
         return (
@@ -131,7 +146,6 @@ export function QuickColorPalette({ activeColor, onPick, onOpenChange }: QuickCo
       {/* 색상 상세 선택기 (스와치 아래로 펼침). 바깥 클릭 시 닫힘. */}
       {detailFor !== null && (
         <>
-          {popoverTapClose && <div className="fixed inset-0 z-40" onClick={() => setDetailFor(null)} />}
           <div className="absolute top-full left-0 mt-2 z-50">
             <ColorDetailPicker
               original={detailOrig}
