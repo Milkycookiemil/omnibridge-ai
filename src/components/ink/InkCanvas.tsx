@@ -285,6 +285,19 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // 감지 폭을 넓힘: buttons 비트(2=사이드, 32=지우개촉) + pointerdown의 button(2=보조, 5=지우개).
   const isBarrelPressed = (e: React.PointerEvent) =>
     e.pointerType === 'pen' && ((e.buttons & (2 | 32)) !== 0 || e.button === 2 || e.button === 5);
+
+  // ── 펜 입력 진단 (URL에 ?debug=pen 일 때만) ───────────────────────
+  // 실기기에서 S펜 사이드 버튼이 어떤 신호로 오는지(혹은 아예 안 오는지) 화면에서 확인한다.
+  const debugPen = typeof window !== 'undefined' && window.location.search.includes('debug=pen');
+  const [penLog, setPenLog] = useState<string[]>([]);
+  const lastLogRef = useRef('');
+  const logPen = (label: string, e: { pointerType?: string; button?: number; buttons?: number; pressure?: number }) => {
+    if (!debugPen) return;
+    const line = `${label} ${e.pointerType ?? '-'} btn=${e.button ?? '-'} btns=${e.buttons ?? '-'} p=${(e.pressure ?? 0).toFixed(2)}`;
+    if (line === lastLogRef.current) return; // 같은 줄 연속 방지(move 폭주 억제)
+    lastLogRef.current = line;
+    setPenLog((prev) => [line, ...prev].slice(0, 10));
+  };
   const getPen = (): PenModel => (barrelRef.current ? (eraserPen ?? DEFAULT_PENS.eraser) : pen);
   // 화면에 닿아있는 손가락(touch) 위치 — 핀치 거리/중점 계산용.
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -938,6 +951,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    logPen('down', e);
     if (e.pointerType === 'pen') { markPen(); barrelRef.current = isBarrelPressed(e); } // 사이드 버튼 = 이 획만 지우개
     if (e.pointerType === 'touch') {
       activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -965,6 +979,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'pen') logPen('move', e);
     if (e.pointerType === 'touch') {
       if (activeTouchesRef.current.has(e.pointerId)) activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinchRef.current && activeTouchesRef.current.size >= 2) { updatePinch(); return; }
@@ -1005,6 +1020,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    logPen('up/cancel', e);
     if (e.pointerType === 'touch') {
       const wasNav = !fingerCanDraw() || pinchRef.current !== null || panRef.current !== null || touchNavRef.current;
       activeTouchesRef.current.delete(e.pointerId);
@@ -1105,7 +1121,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     onPointerCancel: handlePointerUp, // 브라우저가 제스처를 취소(멀티터치 등)할 때 상태 정리
     // S펜 사이드 버튼은 안드로이드에서 '우클릭'으로 처리돼 컨텍스트 메뉴가 뜨며 펜 입력이
     // 취소될 수 있다(→ 아무것도 안 그려짐). 캔버스 위에서는 메뉴를 막는다.
-    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+    onContextMenu: (e: React.MouseEvent) => { logPen('contextmenu', { button: e.button, buttons: e.buttons }); e.preventDefault(); },
     onPointerLeave: handlePointerUp,
   };
   const canvasCursor = { cursor: selectMode ? selCursor : cursorForPen(pen, dispScale) };
@@ -1267,6 +1283,15 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
         <button onClick={() => setZoomClamped(1)} title="100%로 맞춤" className="text-xs font-bold text-slate-700 w-12 tabular-nums hover:text-blue-600">{Math.round(zoom * 100)}%</button>
         <button onClick={() => setZoomClamped((z) => z * 1.25)} title="확대" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={zoom >= ZOOM_MAX}><Plus className="w-4 h-4" /></button>
       </div>
+
+      {/* 펜 입력 진단 오버레이 (?debug=pen 일 때만) — 실기기 S펜 버튼 신호 확인용 */}
+      {debugPen && (
+        <div className="absolute top-2 left-2 z-[60] bg-slate-900/85 text-emerald-300 font-mono text-[11px] leading-tight rounded-lg px-2 py-1.5 max-w-[92%] pointer-events-none">
+          <div className="text-white font-bold mb-0.5">pen debug (btns: 1=촉 2=사이드 32=지우개촉)</div>
+          {penLog.length === 0 ? <div className="text-rose-300">이벤트 없음 — 펜을 대보세요</div>
+            : penLog.map((l, i) => <div key={i}>{l}</div>)}
+        </div>
+      )}
 
       {showLayers && (
         <LayerPanel
