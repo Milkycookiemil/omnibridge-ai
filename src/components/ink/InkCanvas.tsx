@@ -292,7 +292,30 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   // 화면에 닿아있는 손가락(touch) 위치 — 핀치 거리/중점 계산용.
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<null | { startDist: number; startZoom: number; lastMid: { x: number; y: number } }>(null);
-  const panRef = useRef<null | { lastX: number; lastY: number }>(null);
+  // 팬 상태 + 관성용 속도(px/ms). 손을 뗀 뒤 감쇠하며 계속 미끄러진다.
+  const panRef = useRef<null | { lastX: number; lastY: number; lastT: number; vx: number; vy: number }>(null);
+  const momentumRef = useRef<number | null>(null);
+  const stopMomentum = () => { if (momentumRef.current !== null) { cancelAnimationFrame(momentumRef.current); momentumRef.current = null; } };
+  // 손을 뗄 때의 속도로 관성 스크롤. 지수 감쇠(시정수 ≈320ms), 경계에 닿으면 그 축은 정지.
+  const startMomentum = (vx: number, vy: number) => {
+    const el = scrollViewRef.current; if (!el) return;
+    stopMomentum();
+    if (Math.hypot(vx, vy) < 0.05) return; // 너무 느리면 관성 없음(탭·미세 이동)
+    let px = vx, py = vy, last = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(now - last, 50); last = now;
+      const decay = Math.exp(-dt / 320);
+      px *= decay; py *= decay;
+      const bl = el.scrollLeft, bt = el.scrollTop;
+      el.scrollLeft -= px * dt; el.scrollTop -= py * dt;
+      if (el.scrollLeft === bl) px = 0;   // 좌우 끝
+      if (el.scrollTop === bt) py = 0;    // 위아래 끝
+      if (Math.hypot(px, py) < 0.02) { momentumRef.current = null; return; }
+      momentumRef.current = requestAnimationFrame(step);
+    };
+    momentumRef.current = requestAnimationFrame(step);
+  };
+  useEffect(() => stopMomentum, []); // 언마운트 시 정리
   const touchNavRef = useRef(false); // 멀티터치/펜모드 손가락 내비 진행 중 — 손가락 그리기 억제(모두 뗄 때까지)
   const touchList = () => [...activeTouchesRef.current.values()];
   const touchDist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -327,8 +350,13 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
   const updatePan = (x: number, y: number) => {
     const el = scrollViewRef.current; const p = panRef.current; if (!el || !p) return;
-    el.scrollLeft -= (x - p.lastX); el.scrollTop -= (y - p.lastY);
-    p.lastX = x; p.lastY = y;
+    const dx = x - p.lastX, dy = y - p.lastY;
+    el.scrollLeft -= dx; el.scrollTop -= dy;
+    // 최근 속도(px/ms)를 지수 평활로 추적 → 손 뗄 때 관성에 사용
+    const now = performance.now(), dt = Math.max(1, now - p.lastT);
+    p.vx = p.vx * 0.7 + (dx / dt) * 0.3;
+    p.vy = p.vy * 0.7 + (dy / dt) * 0.3;
+    p.lastX = x; p.lastY = y; p.lastT = now;
   };
   // 손가락 그리기 중 두 번째 손가락 등장 → 내비로 전환하며 진행 중이던 획을 취소(모델 제거 + 원격 erase).
   const cancelCurrentStroke = () => {
@@ -945,8 +973,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     if (e.pointerType === 'touch') {
       activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
-      if (activeTouchesRef.current.size >= 2) { cancelCurrentStroke(); startPinch(); return; } // 2손가락 = 핀치 줌/팬
-      if (!fingerCanDraw()) { touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; } // 기본: 1손가락 = 팬(그리지 않음)
+      if (activeTouchesRef.current.size >= 2) { stopMomentum(); cancelCurrentStroke(); startPinch(); return; } // 2손가락 = 핀치 줌/팬
+      if (!fingerCanDraw()) { stopMomentum(); touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY, lastT: performance.now(), vx: 0, vy: 0 }; return; } // 기본: 1손가락 = 팬(그리지 않음)
       // '터치해서 그리기' 켬 + 펜 미사용일 때만 손가락 그리기 → 아래로 진행
     }
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
@@ -1013,9 +1041,14 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       activeTouchesRef.current.delete(e.pointerId);
       try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
       if (activeTouchesRef.current.size < 2) pinchRef.current = null;
-      if (activeTouchesRef.current.size === 0) { panRef.current = null; touchNavRef.current = false; }
+      if (activeTouchesRef.current.size === 0) {
+        const pr = panRef.current;
+        // 손을 뗀 순간이 오래됐으면(멈춘 채 뗌) 관성 없음
+        if (pr && performance.now() - pr.lastT < 120) startMomentum(pr.vx, pr.vy);
+        panRef.current = null; touchNavRef.current = false;
+      }
       else if (!fingerCanDraw() && activeTouchesRef.current.size === 1) {
-        const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y }; // 핀치→1손가락 팬 이어가기(펜모드)
+        const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y, lastT: performance.now(), vx: 0, vy: 0 }; // 핀치→1손가락 팬 이어가기
       }
       if (wasNav) return; // 내비 제스처였으면 그리기 종료 처리 불필요
       // 손가락 사용자 그리기 종료 → 아래로 진행

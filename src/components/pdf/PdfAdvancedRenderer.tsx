@@ -22,6 +22,8 @@ interface PdfNav {
   // 손가락 중점(midX,midY, client좌표)을 고정한 채 target 배율로 줌 + 중점 이동만큼 팬.
   setZoomAt: (target: number, midX: number, midY: number, panDx: number, panDy: number) => void;
   panBy: (dx: number, dy: number) => void;
+  stopMomentum: () => void;                        // 새로 짚으면 미끄러짐 정지
+  startMomentum: (vx: number, vy: number) => void; // 손 뗄 때 속도(px/ms)로 관성 스크롤
   ZOOM_MIN: number;
   ZOOM_MAX: number;
 }
@@ -82,7 +84,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const getPen = (): PenModel => (barrelRef.current ? (eraserPen ?? DEFAULT_PENS.eraser) : pen);
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<null | { startDist: number; startZoom: number; lastMid: { x: number; y: number } }>(null);
-  const panRef = useRef<null | { lastX: number; lastY: number }>(null);
+  const panRef = useRef<null | { lastX: number; lastY: number; lastT: number; vx: number; vy: number }>(null);
   const touchNavRef = useRef(false);
   const touchList = () => [...activeTouchesRef.current.values()];
   const tDist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -509,8 +511,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
     if (e.pointerType === 'touch') {
       activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
-      if (activeTouchesRef.current.size >= 2) { cancelCurrentStroke(); startPinch(); return; } // 2손가락 = 핀치 줌/팬
-      if (!fingerCanDraw()) { touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; } // 기본: 1손가락 = 팬(그리지 않음)
+      if (activeTouchesRef.current.size >= 2) { nav?.stopMomentum(); cancelCurrentStroke(); startPinch(); return; } // 2손가락 = 핀치 줌/팬
+      if (!fingerCanDraw()) { nav?.stopMomentum(); touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY, lastT: performance.now(), vx: 0, vy: 0 }; return; } // 기본: 1손가락 = 팬(그리지 않음)
       // '터치해서 그리기' 켬 + 펜 미사용일 때만 손가락 그리기 → 아래로 진행
     }
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
@@ -532,7 +534,15 @@ const PdfPage: React.FC<PdfPageProps> = ({
     if (e.pointerType === 'touch') {
       if (activeTouchesRef.current.has(e.pointerId)) activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinchRef.current && activeTouchesRef.current.size >= 2) { updatePinch(); return; }
-      if (panRef.current && !fingerCanDraw() && nav) { nav.panBy(e.clientX - panRef.current.lastX, e.clientY - panRef.current.lastY); panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; }
+      if (panRef.current && !fingerCanDraw() && nav) {
+        const pr = panRef.current;
+        const dx = e.clientX - pr.lastX, dy = e.clientY - pr.lastY;
+        nav.panBy(dx, dy);
+        const now = performance.now(), dt = Math.max(1, now - pr.lastT);
+        pr.vx = pr.vx * 0.7 + (dx / dt) * 0.3; pr.vy = pr.vy * 0.7 + (dy / dt) * 0.3;
+        pr.lastX = e.clientX; pr.lastY = e.clientY; pr.lastT = now;
+        return;
+      }
       if (!fingerCanDraw() || touchNavRef.current) return; // 손가락 팬/내비 중 → 그리기 안 함
       // 손가락 사용자 1손가락 그리기 → 아래로 진행
     }
@@ -568,8 +578,12 @@ const PdfPage: React.FC<PdfPageProps> = ({
       activeTouchesRef.current.delete(e.pointerId);
       try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
       if (activeTouchesRef.current.size < 2) pinchRef.current = null;
-      if (activeTouchesRef.current.size === 0) { panRef.current = null; touchNavRef.current = false; }
-      else if (!fingerCanDraw() && activeTouchesRef.current.size === 1) { const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y }; }
+      if (activeTouchesRef.current.size === 0) {
+        const pr = panRef.current;
+        if (pr && nav && performance.now() - pr.lastT < 120) nav.startMomentum(pr.vx, pr.vy);
+        panRef.current = null; touchNavRef.current = false;
+      }
+      else if (!fingerCanDraw() && activeTouchesRef.current.size === 1) { const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y, lastT: performance.now(), vx: 0, vy: 0 }; }
       if (wasNav) return;
       // 손가락 사용자 그리기 종료 → 아래로 진행
     }
@@ -758,11 +772,35 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
     if (Math.abs(f - 1) < 0.0015) { el.scrollLeft = Math.max(0, left); el.scrollTop = Math.max(0, top); }
     else { pendingScrollRef.current = { left, top }; setPdfZoom(t); }
   };
-  const navRef = useRef<PdfNav>({ getZoom: () => 1, setZoomAt, panBy: () => {}, ZOOM_MIN: PDF_ZOOM_MIN, ZOOM_MAX: PDF_ZOOM_MAX });
+  // 팬 관성: 손을 뗀 속도로 감쇠하며 계속 미끄러진다(시정수 ≈320ms, 경계 닿으면 그 축 정지).
+  const momentumRef = useRef<number | null>(null);
+  const stopMomentum = () => { if (momentumRef.current !== null) { cancelAnimationFrame(momentumRef.current); momentumRef.current = null; } };
+  const startMomentum = (vx: number, vy: number) => {
+    const el = containerRef.current; if (!el) return;
+    stopMomentum();
+    if (Math.hypot(vx, vy) < 0.05) return;
+    let px = vx, py = vy, last = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(now - last, 50); last = now;
+      const decay = Math.exp(-dt / 320);
+      px *= decay; py *= decay;
+      const bl = el.scrollLeft, bt = el.scrollTop;
+      el.scrollLeft -= px * dt; el.scrollTop -= py * dt;
+      if (el.scrollLeft === bl) px = 0;
+      if (el.scrollTop === bt) py = 0;
+      if (Math.hypot(px, py) < 0.02) { momentumRef.current = null; return; }
+      momentumRef.current = requestAnimationFrame(step);
+    };
+    momentumRef.current = requestAnimationFrame(step);
+  };
+  useEffect(() => stopMomentum, []);
+
+  const navRef = useRef<PdfNav>({ getZoom: () => 1, setZoomAt, panBy: () => {}, stopMomentum, startMomentum, ZOOM_MIN: PDF_ZOOM_MIN, ZOOM_MAX: PDF_ZOOM_MAX });
   navRef.current = {
     getZoom: () => pdfZoomRef.current,
     setZoomAt,
     panBy: (dx, dy) => { const el = containerRef.current; if (el) { el.scrollLeft -= dx; el.scrollTop -= dy; } },
+    stopMomentum, startMomentum,
     ZOOM_MIN: PDF_ZOOM_MIN, ZOOM_MAX: PDF_ZOOM_MAX,
   };
   const displayWidth = baseWidth ? baseWidth * pdfZoom : 0;
