@@ -8,6 +8,7 @@ import { cn } from '../../lib/utils';
 import { PEN_COLORS, HIGHLIGHTER_COLORS, PEN_META, type PenModel, type PenType } from '../../lib/inkEngine';
 import { PenTip } from './PenTip';
 import { ColorDetailPicker } from './ColorDetailPicker';
+import { usePreferences } from '../../lib/preferences';
 
 const PEN_ICONS: Record<PenType, React.FC<any>> = {
   pen: Pen,
@@ -59,6 +60,7 @@ function BubbleSlider({
 }
 
 export function PenToolbar({ activeType, activePen, setActiveType, updateActivePen, onOpenChange }: PenToolbarProps) {
+  const { popoverTapClose } = usePreferences(); // 켜면 노트 화면 아무 곳이나 눌러도 팝오버가 닫힌다
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false); // 팝오버 안 색상 상세 선택기 펼침
   const [detailOrig, setDetailOrig] = useState('#000000');
@@ -110,7 +112,8 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
       {/* 팝오버 (삼성노트 스타일) — 펜 물성만 */}
       {popoverOpen && (
         <>
-          <div className="fixed inset-0 z-20" onClick={() => { openPopover(false); setDetailOpen(false); }} />
+          {/* 바깥 탭으로 닫기(설정). 끄면 배경을 두지 않아 팝오버를 연 채로 필기할 수 있다. */}
+          {popoverTapClose && <div className="fixed inset-0 z-20" onClick={() => { openPopover(false); setDetailOpen(false); }} />}
           <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 z-30 max-h-[80vh] overflow-y-auto">
             {/* 헤더: 실사풍 펜촉으로 종류 선택 */}
             <div className="flex items-end justify-around gap-1 px-1 pt-1 pb-2 border-b border-slate-100">

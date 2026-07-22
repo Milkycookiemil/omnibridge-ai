@@ -80,7 +80,7 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLegal }) => {
   const [activeGroup, setActiveGroup] = useState<SettingGroup>('account');
   const currentEmail = getCurrentUser()?.email ?? null;
-  const { notificationsEnabled, setNotificationsEnabled, noteViewMode, setNoteViewMode, touchDraw, setTouchDraw } = usePreferences();
+  const { notificationsEnabled, setNotificationsEnabled, noteViewMode, setNoteViewMode, touchDraw, setTouchDraw, popoverTapClose, setPopoverTapClose } = usePreferences();
   const [data, setData] = useState(DUMMY_DATA);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showEnergyToast, setShowEnergyToast] = useState(false);
@@ -655,6 +655,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                           onClick={() => setTouchDraw(true)}
                           className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${touchDraw ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                         >손가락도</button>
+                      </div>
+                    </div>
+                    {/* 팝오버를 노트 화면 탭으로 닫기 */}
+                    <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                      <div>
+                        <h4 className="font-bold text-slate-800 mb-1">노트 화면을 눌러 설정창 닫기</h4>
+                        <p className="text-sm text-slate-500 font-medium">
+                          켜두면 펜·색상 상세 설정이 열렸을 때 <span className="font-bold">노트 아무 곳이나 누르면 닫힙니다.</span>
+                          끄면 설정창을 <span className="font-bold">열어둔 채로 필기</span>할 수 있고, 버튼을 다시 눌러야 닫힙니다.
+                        </p>
+                      </div>
+                      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 shrink-0">
+                        <button
+                          onClick={() => setPopoverTapClose(true)}
+                          className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${popoverTapClose ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >켬</button>
+                        <button
+                          onClick={() => setPopoverTapClose(false)}
+                          className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${!popoverTapClose ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >끔</button>
                       </div>
                     </div>
                     <div className="p-6 border-b border-slate-100 flex items-center justify-between">

@@ -3,7 +3,7 @@
 //  - 표준 탭: 색상×명도 프리셋 그리드(+ 무채색 열)
 //  - 사용자 지정 탭: 채도/명도 사각 + 색상(hue) 슬라이더 (HSV 드래그)
 //  - 공통 하단: 전/후 미리보기 + 색상코드(hex) + 빨강/녹색/파랑 값 + 최근색 + 스포이드
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pipette } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { usePreferences } from '../../lib/preferences';
@@ -89,6 +89,22 @@ export function ColorDetailPicker({
   const commit = (hex: string) => { onChange(hex); };
   const commitFinal = (hex: string) => { onChange(hex); pushRecentColor(hex); };
 
+  // 색상코드 직접 입력: 타이핑 중에는 초안을 유지하고, 6자리로 완성될 때마다 즉시 반영.
+  // (최근색은 입력이 끝났을 때만 쌓이도록 blur에서 commitFinal)
+  const [hexDraft, setHexDraft] = useState(color.toUpperCase());
+  useEffect(() => { setHexDraft(color.toUpperCase()); }, [color]);
+  const onHexInput = (v: string) => {
+    setHexDraft(v);
+    const m = /^#?([0-9a-f]{6})$/i.exec(v.trim());
+    if (m) commit('#' + m[1].toUpperCase());
+  };
+  // 빨강/녹색/파랑 직접 입력: 0~255로 보정해 즉시 반영.
+  const setChannel = (ch: 'r' | 'g' | 'b', v: number) => {
+    const n = clamp(Number.isFinite(v) ? Math.round(v) : 0);
+    const next = { ...rgb, [ch]: n };
+    commit(rgbToHex(next.r, next.g, next.b));
+  };
+
   // 사용자 지정: SV 사각/hue 슬라이더 드래그
   const dragSV = (e: React.PointerEvent) => {
     const el = svRef.current; if (!el) return;
@@ -170,16 +186,38 @@ export function ColorDetailPicker({
         </div>
       )}
 
-      {/* 전/후 미리보기 + 값 */}
-      <div className="flex items-center gap-3 mt-3">
+      {/* 전/후 미리보기 + 값(직접 입력 가능) */}
+      <div className="flex items-center gap-2.5 mt-3">
         <div className="w-11 h-9 rounded-md overflow-hidden border border-slate-200 flex shrink-0">
           <div className="flex-1" style={{ backgroundColor: original }} />
           <div className="flex-1" style={{ backgroundColor: color }} />
         </div>
-        <div className="grid grid-cols-4 gap-x-2 text-[10px] leading-tight flex-1">
-          <div className="col-span-4 flex justify-between"><span className="text-slate-400 font-bold">색상 코드</span><span className="font-mono font-bold text-slate-700">{color.toUpperCase()}</span></div>
-          <div className="text-slate-400 font-bold">빨강</div><div className="text-slate-400 font-bold">녹색</div><div className="text-slate-400 font-bold">파랑</div><div />
-          <div className="font-mono font-bold text-slate-700">{rgb.r}</div><div className="font-mono font-bold text-slate-700">{rgb.g}</div><div className="font-mono font-bold text-slate-700">{rgb.b}</div><div />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-500 shrink-0">색상 코드</span>
+            <input
+              value={hexDraft}
+              onChange={(e) => onHexInput(e.target.value)}
+              onBlur={() => { setHexDraft(color.toUpperCase()); commitFinal(colorRef.current); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              spellCheck={false}
+              className="min-w-0 flex-1 font-mono text-[11px] font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-slate-300"
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-1.5 mt-1.5">
+            {(['r', 'g', 'b'] as const).map((ch) => (
+              <label key={ch} className="flex flex-col gap-0.5">
+                <span className="text-[11px] font-bold text-slate-500">{ch === 'r' ? '빨강' : ch === 'g' ? '녹색' : '파랑'}</span>
+                <input
+                  type="number" min={0} max={255} inputMode="numeric"
+                  value={rgb[ch]}
+                  onChange={(e) => setChannel(ch, parseInt(e.target.value, 10))}
+                  onBlur={() => commitFinal(colorRef.current)}
+                  className="w-full font-mono text-[11px] font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                />
+              </label>
+            ))}
+          </div>
         </div>
       </div>
 

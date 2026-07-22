@@ -31,7 +31,7 @@ interface QuickColorPaletteProps {
 type DetailTarget = number | 'free' | null;
 
 export function QuickColorPalette({ activeColor, onPick, onOpenChange }: QuickColorPaletteProps) {
-  const { favoriteColors, setFavoriteColor } = usePreferences();
+  const { favoriteColors, setFavoriteColor, popoverTapClose } = usePreferences();
   const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
   // 길게 누르기 감지: pointerdown에서 타이머 시작, up/cancel로 해제.
@@ -131,7 +131,7 @@ export function QuickColorPalette({ activeColor, onPick, onOpenChange }: QuickCo
       {/* 색상 상세 선택기 (스와치 아래로 펼침). 바깥 클릭 시 닫힘. */}
       {detailFor !== null && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setDetailFor(null)} />
+          {popoverTapClose && <div className="fixed inset-0 z-40" onClick={() => setDetailFor(null)} />}
           <div className="absolute top-full left-0 mt-2 z-50">
             <ColorDetailPicker
               original={detailOrig}

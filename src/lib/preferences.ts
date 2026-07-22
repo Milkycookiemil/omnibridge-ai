@@ -17,6 +17,7 @@ interface PersistedPrefs {
   noteViewMode: NoteViewMode; // 필기 페이지 보기: 연속 스크롤 / 페이지 넘김
   recentColors: string[]; // 색상 상세 선택기에서 최근 고른 색(최대 6, 최신순)
   touchDraw: boolean; // 손가락으로 그리기 허용(기본 끔 = 삼성노트식: S펜만 그림, 손가락은 팬/줌 전용)
+  popoverTapClose: boolean; // 펜/색상 상세 팝오버를 노트 화면 아무 곳이나 눌러도 닫기(기본 켬)
 }
 
 const DEFAULTS: PersistedPrefs = {
@@ -28,6 +29,7 @@ const DEFAULTS: PersistedPrefs = {
   noteViewMode: 'scroll',
   recentColors: [],
   touchDraw: false,
+  popoverTapClose: true,
 };
 
 const loadPrefs = (): PersistedPrefs => {
@@ -49,6 +51,7 @@ interface PreferencesState extends PersistedPrefs {
   setNoteViewMode: (mode: NoteViewMode) => void;
   pushRecentColor: (color: string) => void;
   setTouchDraw: (on: boolean) => void;
+  setPopoverTapClose: (on: boolean) => void;
 }
 
 const persist = (prefs: PersistedPrefs) => {
@@ -69,6 +72,7 @@ const snapshot = (s: PreferencesState): PersistedPrefs => ({
   noteViewMode: s.noteViewMode,
   recentColors: s.recentColors,
   touchDraw: s.touchDraw,
+  popoverTapClose: s.popoverTapClose,
 });
 
 export const usePreferences = create<PreferencesState>((set, get) => ({
@@ -107,6 +111,10 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
   },
   setTouchDraw: (on) => {
     set({ touchDraw: on });
+    persist(snapshot(get()));
+  },
+  setPopoverTapClose: (on) => {
+    set({ popoverTapClose: on });
     persist(snapshot(get()));
   },
 }));
