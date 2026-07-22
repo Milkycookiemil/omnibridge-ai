@@ -120,7 +120,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   const flipCooldownRef = useRef(0);                  // 관성 스크롤로 여러 장 넘어가지 않게 쿨다운
 
   // 보기 방식 (설정에서 선택): 'scroll' = 연속 스크롤(페이지가 세로로 이어짐, 기본) / 'flip' = 페이지 넘김.
-  const { noteViewMode } = usePreferences();
+  const { noteViewMode, touchDraw } = usePreferences();
+  // 손가락 그리기 허용 여부(기본 꺼짐 = 삼성노트식: S펜만 그리고 손가락은 팬/줌 전용).
+  // 켜져 있어도 펜이 한 번 감지되면(penMode) 손바닥 방지를 위해 손가락 그리기는 중단한다.
+  const touchDrawRef = useRef(touchDraw); touchDrawRef.current = touchDraw;
+  const fingerCanDraw = () => touchDrawRef.current && !penModeRef.current;
   const scrollMode = noteViewMode === 'scroll';
   const scrollModeRef = useRef(scrollMode); scrollModeRef.current = scrollMode;
   // 연속 스크롤용: 페이지별 캔버스/박스 엘리먼트. 활성 페이지 캔버스만 레이어 합성 대상이고
@@ -928,8 +932,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
       if (activeTouchesRef.current.size >= 2) { cancelCurrentStroke(); startPinch(); return; } // 2손가락 = 핀치 줌/팬
-      if (penModeRef.current) { touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; } // 펜모드 1손가락 = 팬
-      // 손가락 사용자(펜 미사용) 1손가락 = 그리기 → 아래로 진행
+      if (!fingerCanDraw()) { touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; } // 기본: 1손가락 = 팬(그리지 않음)
+      // '터치해서 그리기' 켬 + 펜 미사용일 때만 손가락 그리기 → 아래로 진행
     }
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
     // 연속 스크롤: 다른 페이지 캔버스에 펜을 대면 그 페이지를 즉시 활성으로(그대로 그리기 시작).
@@ -953,8 +957,8 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     if (e.pointerType === 'touch') {
       if (activeTouchesRef.current.has(e.pointerId)) activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinchRef.current && activeTouchesRef.current.size >= 2) { updatePinch(); return; }
-      if (panRef.current && penModeRef.current) { updatePan(e.clientX, e.clientY); return; }
-      if (penModeRef.current || touchNavRef.current) return; // 펜모드 손가락/내비 중 → 그리기 안 함
+      if (panRef.current && !fingerCanDraw()) { updatePan(e.clientX, e.clientY); return; }
+      if (!fingerCanDraw() || touchNavRef.current) return; // 손가락 팬/내비 중 → 그리기 안 함
       // 손가락 사용자 1손가락 그리기 → 아래로 진행
     }
     if (selectMode) { const cp = toCanvasCoords(e); if (dragRef.current) handleSelectMove(cp); else if (e.pointerType !== 'touch') updateHoverCursor(cp); return; }
@@ -990,12 +994,12 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === 'touch') {
-      const wasNav = penModeRef.current || pinchRef.current !== null || panRef.current !== null || touchNavRef.current;
+      const wasNav = !fingerCanDraw() || pinchRef.current !== null || panRef.current !== null || touchNavRef.current;
       activeTouchesRef.current.delete(e.pointerId);
       try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
       if (activeTouchesRef.current.size < 2) pinchRef.current = null;
       if (activeTouchesRef.current.size === 0) { panRef.current = null; touchNavRef.current = false; }
-      else if (penModeRef.current && activeTouchesRef.current.size === 1) {
+      else if (!fingerCanDraw() && activeTouchesRef.current.size === 1) {
         const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y }; // 핀치→1손가락 팬 이어가기(펜모드)
       }
       if (wasNav) return; // 내비 제스처였으면 그리기 종료 처리 불필요

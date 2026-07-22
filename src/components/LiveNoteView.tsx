@@ -18,7 +18,7 @@ import { useTranscription } from '../hooks/useTranscription';
 import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
 import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteBookmarks, saveNoteTypedText, saveNoteTranscript } from '../lib/notesStore';
-import { downloadPdf, takePdfFile } from '../lib/pdfStore';
+import { downloadPdf, takePdfFile, loadPdfLocal, savePdfLocal } from '../lib/pdfStore';
 import { pageDims } from '../lib/pageSizes';
 import { buildRecordingStream, NO_SYSTEM_AUDIO } from '../lib/audioCapture';
 import { RecordSourcePopover } from './RecordSourcePopover';
@@ -73,17 +73,15 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
         // navContext.file이 없을 때(WorkspaceView 라우팅으로 떨어졌거나 대시보드 재열기):
         // ① 방금 고른 파일이 메모리 캐시에 있으면 그걸 즉시 사용(게스트 포함) →
         // ② 없으면 Storage에서 원본 다운로드(로그인 사용자의 재방문)
+        // ③ 둘 다 없으면 로컬(IndexedDB)에 영속된 원본 → 게스트·오프라인·새로고침 재진입 복원
         if (!fileDetails) {
           const stashed = takePdfFile(noteId);
-          if (stashed) {
-            objUrl = URL.createObjectURL(stashed);
-            if (!revoked) setPdfUrl(objUrl);
-          } else {
-            const blob = await downloadPdf(noteId);
-            if (blob && !revoked) {
-              objUrl = URL.createObjectURL(blob);
-              setPdfUrl(objUrl);
-            }
+          const blob = stashed ?? (await loadPdfLocal(noteId)) ?? (await downloadPdf(noteId));
+          if (blob && !revoked) {
+            objUrl = URL.createObjectURL(blob);
+            setPdfUrl(objUrl);
+            // 클라우드에서 받아온 경우 다음 방문을 위해 로컬에도 캐시
+            if (!stashed) void savePdfLocal(noteId, blob);
           }
         }
       }

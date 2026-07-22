@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, File, FilePlus, Sparkles, ChevronLeft } from 'lucide-react';
 import { ViewState } from '../types';
 import { createNote, deleteNote, type PaperStyle } from '../lib/notesStore';
-import { uploadPdf, isFileStoreReady, QuotaError, stashPdfFile } from '../lib/pdfStore';
+import { uploadPdf, isFileStoreReady, QuotaError, stashPdfFile, savePdfLocal } from '../lib/pdfStore';
 import { PAGE_RATIOS, makeSizeId, isSquare, pageDims, type Orientation } from '../lib/pageSizes';
 import { cn } from '../lib/utils';
 
@@ -48,6 +48,8 @@ export function NewNoteModal({ open, onClose, onNavigate }: NewNoteModalProps) {
     // 방금 고른 원본을 메모리에 잠시 보관 → WorkspaceView 라우팅이 navContext.file을
     // 떨어뜨려도 LiveNoteView가 최초 렌더에서 바로 쓴다(게스트도 PDF 표시됨).
     stashPdfFile(note.id, file);
+    // 원본을 로컬(IndexedDB)에도 영속 → 새로고침·게스트·오프라인에서도 노트 재진입 시 복원된다.
+    void savePdfLocal(note.id, file);
     if (isFileStoreReady()) {
       try {
         await uploadPdf(note.id, file);

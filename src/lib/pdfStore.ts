@@ -29,6 +29,51 @@ export const stashPdfFile = (noteId: string, file: File): void => { recentPdfFil
 export const takePdfFile = (noteId: string): File | undefined => recentPdfFiles.get(noteId);
 export const forgetPdfFile = (noteId: string): void => { recentPdfFiles.delete(noteId); };
 
+// ── 원본 로컬 영속 (IndexedDB) ─────────────────────────────────────
+// 위 메모리 캐시는 새로고침·탭 재생성에 사라지고, Storage 다운로드는 Supabase+로그인이 필요하다.
+// 그래서 게스트/오프라인/시뮬레이션 모드에선 PDF 노트를 다시 열 때 원본을 어디서도 못 찾아
+// "PDF 로딩 중…"에서 멈췄다. 원본을 로컬에 영속해 재방문에도 항상 복원되게 한다.
+// notes DB(version 1) 스키마를 건드리지 않으려고 별도 DB를 쓴다.
+const FILE_DB = 'omnibridge-files';
+const FILE_STORE = 'pdf';
+
+function openFileDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FILE_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(FILE_STORE)) db.createObjectStore(FILE_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// 실패해도 앱이 죽지 않도록 항상 null로 흡수한다(저장소 미지원·용량초과 등).
+async function fileTx(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest): Promise<unknown> {
+  try {
+    const db = await openFileDb();
+    return await new Promise<unknown>((resolve) => {
+      const tx = db.transaction(FILE_STORE, mode);
+      const req = fn(tx.objectStore(FILE_STORE));
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+      tx.onabort = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export const savePdfLocal = (noteId: string, file: Blob): Promise<unknown> =>
+  fileTx('readwrite', (s) => s.put(file, noteId));
+export const loadPdfLocal = async (noteId: string): Promise<Blob | null> => {
+  const v = await fileTx('readonly', (s) => s.get(noteId));
+  return v instanceof Blob ? v : null;
+};
+export const deletePdfLocal = (noteId: string): Promise<unknown> =>
+  fileTx('readwrite', (s) => s.delete(noteId));
+
 const pdfPath = (u: string, noteId: string) => `${u}/${noteId}.pdf`;
 
 // 계정 저장 여유가 없을 때 던지는 에러 (UI가 안내 문구로 구분해 처리).

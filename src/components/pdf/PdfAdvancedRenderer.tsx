@@ -5,6 +5,7 @@ import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Tra
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import { QuickColorPalette } from '../ink/QuickColorPalette';
+import { usePreferences } from '../../lib/preferences';
 import {
   renderInkSegment, renderStrokeSmoothed, widthForPressure, cursorForPen,
   snapLineEnd, recognizeShape, shapeToPoints, pointInPolygon, distancePointToSegment,
@@ -68,6 +69,10 @@ const PdfPage: React.FC<PdfPageProps> = ({
   //  · 손가락 사용자: 1손가락=그리기, 2손가락=핀치 줌+팬.
   const penModeRef = useRef(false);
   const markPen = () => { penModeRef.current = true; };
+  // 손가락 그리기 허용 여부(기본 꺼짐 = S펜만 그림). 켜져 있어도 펜 감지 후엔 손바닥 방지로 중단.
+  const { touchDraw } = usePreferences();
+  const touchDrawRef = useRef(touchDraw); touchDrawRef.current = touchDraw;
+  const fingerCanDraw = () => touchDrawRef.current && !penModeRef.current;
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<null | { startDist: number; startZoom: number; lastMid: { x: number; y: number } }>(null);
   const panRef = useRef<null | { lastX: number; lastY: number }>(null);
@@ -509,8 +514,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
       activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
       if (activeTouchesRef.current.size >= 2) { cancelCurrentStroke(); startPinch(); return; } // 2손가락 = 핀치 줌/팬
-      if (penModeRef.current) { touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; } // 펜모드 1손가락 = 팬
-      // 손가락 사용자 1손가락 = 그리기 → 아래로 진행
+      if (!fingerCanDraw()) { touchNavRef.current = true; panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; } // 기본: 1손가락 = 팬(그리지 않음)
+      // '터치해서 그리기' 켬 + 펜 미사용일 때만 손가락 그리기 → 아래로 진행
     }
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
     const ratio = getCoordinatesRatio(e);
@@ -530,8 +535,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
     if (e.pointerType === 'touch') {
       if (activeTouchesRef.current.has(e.pointerId)) activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinchRef.current && activeTouchesRef.current.size >= 2) { updatePinch(); return; }
-      if (panRef.current && penModeRef.current && nav) { nav.panBy(e.clientX - panRef.current.lastX, e.clientY - panRef.current.lastY); panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; }
-      if (penModeRef.current || touchNavRef.current) return; // 펜모드 손가락/내비 중 → 그리기 안 함
+      if (panRef.current && !fingerCanDraw() && nav) { nav.panBy(e.clientX - panRef.current.lastX, e.clientY - panRef.current.lastY); panRef.current = { lastX: e.clientX, lastY: e.clientY }; return; }
+      if (!fingerCanDraw() || touchNavRef.current) return; // 손가락 팬/내비 중 → 그리기 안 함
       // 손가락 사용자 1손가락 그리기 → 아래로 진행
     }
     if (selectMode) { const rp = getCoordinatesRatio(e); if (selDragRef.current) selectMove(rp); else if (e.pointerType !== 'touch') updateHoverCursor(rp); return; }
@@ -561,12 +566,12 @@ const PdfPage: React.FC<PdfPageProps> = ({
 
   const stopDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === 'touch') {
-      const wasNav = penModeRef.current || pinchRef.current !== null || panRef.current !== null || touchNavRef.current;
+      const wasNav = !fingerCanDraw() || pinchRef.current !== null || panRef.current !== null || touchNavRef.current;
       activeTouchesRef.current.delete(e.pointerId);
       try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
       if (activeTouchesRef.current.size < 2) pinchRef.current = null;
       if (activeTouchesRef.current.size === 0) { panRef.current = null; touchNavRef.current = false; }
-      else if (penModeRef.current && activeTouchesRef.current.size === 1) { const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y }; }
+      else if (!fingerCanDraw() && activeTouchesRef.current.size === 1) { const rem = touchList()[0]; panRef.current = { lastX: rem.x, lastY: rem.y }; }
       if (wasNav) return;
       // 손가락 사용자 그리기 종료 → 아래로 진행
     }

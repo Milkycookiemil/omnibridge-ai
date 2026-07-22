@@ -80,7 +80,7 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLegal }) => {
   const [activeGroup, setActiveGroup] = useState<SettingGroup>('account');
   const currentEmail = getCurrentUser()?.email ?? null;
-  const { notificationsEnabled, setNotificationsEnabled, noteViewMode, setNoteViewMode } = usePreferences();
+  const { notificationsEnabled, setNotificationsEnabled, noteViewMode, setNoteViewMode, touchDraw, setTouchDraw } = usePreferences();
   const [data, setData] = useState(DUMMY_DATA);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showEnergyToast, setShowEnergyToast] = useState(false);
@@ -635,6 +635,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onLogout, onShowLega
                           onClick={() => setNoteViewMode('flip')}
                           className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${noteViewMode === 'flip' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                         >페이지 넘김</button>
+                      </div>
+                    </div>
+                    {/* 손가락으로 그리기(터치 드로잉) — 기본 꺼짐: S펜만 그리고 손가락은 팬/줌 전용 */}
+                    <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                      <div>
+                        <h4 className="font-bold text-slate-800 mb-1">손가락으로 그리기</h4>
+                        <p className="text-sm text-slate-500 font-medium">
+                          꺼두면 <span className="font-bold">S펜·터치펜으로만</span> 그리고 손가락은 이동·확대 전용입니다(손바닥 오작동 없음).
+                          터치펜이 없다면 켜세요.
+                        </p>
+                      </div>
+                      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 shrink-0">
+                        <button
+                          onClick={() => setTouchDraw(false)}
+                          className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${!touchDraw ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >펜만</button>
+                        <button
+                          onClick={() => setTouchDraw(true)}
+                          className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${touchDraw ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >손가락도</button>
                       </div>
                     </div>
                     <div className="p-6 border-b border-slate-100 flex items-center justify-between">

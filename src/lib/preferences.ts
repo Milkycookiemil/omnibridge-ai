@@ -16,6 +16,7 @@ interface PersistedPrefs {
   favoriteColors: string[]; // 필기 툴바 3색 퀵 팔레트(즐겨찾기). 클릭=적용/우클릭=현재색 저장
   noteViewMode: NoteViewMode; // 필기 페이지 보기: 연속 스크롤 / 페이지 넘김
   recentColors: string[]; // 색상 상세 선택기에서 최근 고른 색(최대 6, 최신순)
+  touchDraw: boolean; // 손가락으로 그리기 허용(기본 끔 = 삼성노트식: S펜만 그림, 손가락은 팬/줌 전용)
 }
 
 const DEFAULTS: PersistedPrefs = {
@@ -26,6 +27,7 @@ const DEFAULTS: PersistedPrefs = {
   favoriteColors: ['#f59e0b', '#3b82f6', '#334155'], // 주황 / 파랑 / 짙은 회색
   noteViewMode: 'scroll',
   recentColors: [],
+  touchDraw: false,
 };
 
 const loadPrefs = (): PersistedPrefs => {
@@ -46,6 +48,7 @@ interface PreferencesState extends PersistedPrefs {
   setFavoriteColor: (index: number, color: string) => void;
   setNoteViewMode: (mode: NoteViewMode) => void;
   pushRecentColor: (color: string) => void;
+  setTouchDraw: (on: boolean) => void;
 }
 
 const persist = (prefs: PersistedPrefs) => {
@@ -65,6 +68,7 @@ const snapshot = (s: PreferencesState): PersistedPrefs => ({
   favoriteColors: s.favoriteColors,
   noteViewMode: s.noteViewMode,
   recentColors: s.recentColors,
+  touchDraw: s.touchDraw,
 });
 
 export const usePreferences = create<PreferencesState>((set, get) => ({
@@ -99,6 +103,10 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
     const c = color.toLowerCase();
     const next = [c, ...get().recentColors.filter((x) => x.toLowerCase() !== c)].slice(0, 6);
     set({ recentColors: next });
+    persist(snapshot(get()));
+  },
+  setTouchDraw: (on) => {
+    set({ touchDraw: on });
     persist(snapshot(get()));
   },
 }));
