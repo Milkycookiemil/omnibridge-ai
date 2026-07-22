@@ -774,12 +774,47 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
     loadPdf();
   }, [fileUrl]);
 
-  // 특정 페이지로 스크롤 (이전/다음 화살표용)
+  // 특정 페이지로 스크롤 (이전/다음 화살표·썸네일 점프용)
   const scrollToPage = (n: number) => {
     const clamped = Math.max(1, Math.min(numPages, n));
     const pages = containerRef.current?.querySelectorAll('.pdf-page');
     pages?.[clamped - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+
+  // ── 썸네일 페이지 점프 (긴 PDF 문제풀이 네비게이션) ──────────────────
+  const [thumbsOpen, setThumbsOpen] = useState(false);
+  const [thumbs, setThumbs] = useState<Record<number, string>>({}); // 페이지→미리보기 dataURL(캐시)
+  const thumbsRef = useRef<Record<number, string>>({}); thumbsRef.current = thumbs;
+  const thumbSeqRef = useRef(0); // 열기/닫기 세대 — 중간에 닫히면 렌더 루프 중단
+  // 한 페이지를 작은 캔버스에 렌더해 dataURL 생성(폭 ≈160px). 실패 시 null(플레이스홀더 유지).
+  const renderThumb = async (pdf: pdfjsLib.PDFDocumentProxy, pageNum: number): Promise<string | null> => {
+    try {
+      const page = await pdf.getPage(pageNum);
+      const base = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(1, 160 / base.width) });
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.ceil(vp.width)); c.height = Math.max(1, Math.ceil(vp.height));
+      const ctx = c.getContext('2d'); if (!ctx) return null;
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvas: c, canvasContext: ctx, viewport: vp }).promise;
+      return c.toDataURL('image/png');
+    } catch { return null; }
+  };
+  const openThumbs = () => {
+    if (!pdfDoc) return;
+    setThumbsOpen(true);
+    const seq = ++thumbSeqRef.current;
+    (async () => {
+      for (let n = 1; n <= numPages; n++) {
+        if (thumbSeqRef.current !== seq) return;      // 닫힘/재요청 시 중단
+        if (thumbsRef.current[n]) continue;           // 이미 렌더됨(캐시)
+        const url = await renderThumb(pdfDoc, n);
+        if (thumbSeqRef.current !== seq) return;
+        if (url) setThumbs((prev) => ({ ...prev, [n]: url }));
+      }
+    })();
+  };
+  const closeThumbs = () => { thumbSeqRef.current++; setThumbsOpen(false); };
 
   // P1: 전사 라인 클릭 → 모든 페이지에서 그 시각의 획 하이라이트 + 첫 매칭 페이지로 스크롤.
   useImperativeHandle(ref, () => ({
@@ -897,7 +932,7 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
          
          <div className="flex items-center gap-1 font-mono text-sm text-slate-500 font-bold bg-slate-50 px-1.5 py-1 rounded-lg border border-slate-200">
              <button onClick={() => scrollToPage(currentPageNum - 1)} disabled={currentPageNum <= 1} className="p-1 rounded hover:bg-white disabled:opacity-30 transition-colors" title="이전 페이지"><ChevronLeft className="w-4 h-4" /></button>
-             <span className="px-1.5">{currentPageNum} / {numPages}</span>
+             <button onClick={openThumbs} title="페이지 썸네일 (클릭해 이동)" className="px-1.5 rounded hover:bg-white transition-colors">{currentPageNum} / {numPages}</button>
              <button onClick={() => scrollToPage(currentPageNum + 1)} disabled={currentPageNum >= numPages} className="p-1 rounded hover:bg-white disabled:opacity-30 transition-colors" title="다음 페이지"><ChevronRight className="w-4 h-4" /></button>
          </div>
 
@@ -991,6 +1026,39 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
         <button onClick={() => setPdfZoom(1)} title="100%로 맞춤" className="text-xs font-bold text-slate-700 w-12 tabular-nums hover:text-violet-600">{Math.round(pdfZoom * 100)}%</button>
         <button onClick={() => setPdfZoomClamped((z) => z * 1.25)} title="확대" className="p-1.5 rounded-full hover:bg-slate-100 text-slate-600 disabled:opacity-40" disabled={pdfZoom >= PDF_ZOOM_MAX}><Plus className="w-4 h-4" /></button>
       </div>
+
+      {/* 페이지 썸네일 그리드 (헤더 n/N 클릭 시) — 클릭해 그 페이지로 점프 */}
+      {thumbsOpen && (
+        <div className="absolute inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6" onClick={closeThumbs}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-full flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <h3 className="font-bold text-slate-800 text-sm">페이지 <span className="text-slate-400 font-medium">({numPages})</span></h3>
+              <button onClick={closeThumbs} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-4">
+              {Array.from({ length: numPages }, (_, i) => {
+                const n = i + 1;
+                return (
+                  <button
+                    key={n}
+                    onClick={() => { scrollToPage(n); closeThumbs(); }}
+                    title={`${n} 페이지로 이동`}
+                    className={cn('relative rounded-lg overflow-hidden border-2 bg-slate-50 shadow-sm transition-all hover:shadow-md flex items-center justify-center',
+                      n === currentPageNum ? 'border-violet-500 ring-2 ring-violet-200' : 'border-slate-200 hover:border-slate-300')}
+                    style={{ aspectRatio: '3 / 4' }}
+                  >
+                    {thumbs[n]
+                      ? <img src={thumbs[n]} alt={`페이지 ${n}`} className="w-full h-full object-contain" draggable={false} />
+                      : <div className="w-5 h-5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />}
+                    <span className={cn('absolute bottom-1 right-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full',
+                      n === currentPageNum ? 'bg-violet-500 text-white' : 'bg-white/80 text-slate-500')}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
