@@ -37,7 +37,6 @@ interface PdfPageProps {
   highlightedIndexes: { pageIndex: number, matchIndex: number, textIndex: number }[];
   currentMatchIndex: number | null;
   onPageMatchCalculated: (pageIndex: number, matches: { textIndex: number, rect: any }[]) => void;
-  onVisible: (pageNumber: number) => void;
   initialStrokes?: PageStroke[]; // 저장된 필기 복원용
   onStrokesChange?: (pageNumber: number, strokes: PageStroke[]) => void; // 필기 변경 알림(저장용)
   straightLine?: boolean; // #4 자(직선)
@@ -53,7 +52,7 @@ interface PdfPageProps {
 
 const PdfPage: React.FC<PdfPageProps> = ({
   pageNumber, pdfDocument, pen, scale, searchText,
-  highlightedIndexes, currentMatchIndex, onPageMatchCalculated, onVisible,
+  highlightedIndexes, currentMatchIndex, onPageMatchCalculated,
   initialStrokes, onStrokesChange, straightLine = false, shapeMode = false,
   selectMode = false, registerHandle, onHistoryChange, strokeTime, onStrokeTap,
   displayWidth, nav,
@@ -230,20 +229,8 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
   hlFnRef.current = highlightByTime;
 
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting && e.intersectionRatio > 0.5) {
-            onVisible(pageNumber);
-          }
-        });
-      },
-      { threshold: [0.1, 0.5, 0.9] }
-    );
-    if (containerRef.current) observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [pageNumber, onVisible]);
+  // 현재 페이지 판정은 부모가 스크롤 위치로 계산한다(축소 시 여러 페이지가 동시에 50%를
+  // 넘겨 IntersectionObserver가 마지막 것으로 튀며 페이지가 2칸씩 건너뛰던 문제).
 
   useEffect(() => {
     let renderTask: any;
@@ -913,6 +900,29 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
      }
   }, [searchText]);
 
+  // 현재 페이지 = 뷰포트 중앙에 가장 가까운 페이지(스크롤 기반). 축소해도 정확히 1칸씩 이동.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const calc = () => {
+      const pages = el.querySelectorAll('.pdf-page');
+      if (!pages.length) return;
+      const mid = el.getBoundingClientRect().top + el.clientHeight / 2;
+      let best = 1, bestDist = Infinity;
+      pages.forEach((p, i) => {
+        const r = (p as HTMLElement).getBoundingClientRect();
+        const d = Math.abs((r.top + r.bottom) / 2 - mid);
+        if (d < bestDist) { bestDist = d; best = i + 1; }
+      });
+      setCurrentPageNum((prev) => (prev === best ? prev : best));
+    };
+    const onScroll = () => { if (timer) clearTimeout(timer); timer = setTimeout(calc, 100); };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    calc();
+    return () => { el.removeEventListener('scroll', onScroll); if (timer) clearTimeout(timer); };
+  }, [pdfDoc, numPages]);
+
   // 줌 100% 기준 표시 폭 측정(컨테이너 폭 - 좌우 패딩 48px, 최대 820).
   useEffect(() => {
     const el = containerRef.current;
@@ -956,7 +966,8 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   return (
     <div className="absolute inset-0 flex flex-col pt-16 z-0 bg-slate-200 rounded-md overflow-hidden border border-slate-200 shadow-inner">
       {/* Search Bar */}
-      <div className="absolute top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 flex items-center px-4 justify-between shadow-sm z-30">
+      {/* 헤더는 떠 있는 도구 툴바(z-40)보다 위여야 북마크 목록 팝오버가 가려지지 않는다. */}
+      <div className="absolute top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 flex items-center px-4 justify-between shadow-sm z-50">
          <h2 className="text-slate-600 font-bold max-w-[200px] truncate text-sm">{fileName}</h2>
          
          <div className="flex items-center gap-1 font-mono text-sm text-slate-500 font-bold bg-slate-50 px-1.5 py-1 rounded-lg border border-slate-200">
@@ -1050,7 +1061,8 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
       </div>
 
       {/* Scrollable Document Area — 줌 시 가로 스크롤(overflow-auto) + w-max 래퍼로 좌우 대칭 스크롤 보장 */}
-      <div className="flex-1 overflow-auto p-6 bg-slate-100 custom-scrollbar" ref={containerRef}>
+      {/* pt-20: 떠 있는 도구 툴바(top-[4.5rem], 높이 ≈54px) 아래에서 문서가 시작되도록 — 첫 페이지 가림 방지 */}
+      <div className="flex-1 overflow-auto px-6 pb-6 pt-20 bg-slate-100 custom-scrollbar" ref={containerRef}>
         <div className="min-w-full w-max mx-auto flex flex-col items-center">
          {Array.from({ length: numPages }, (_, i) => (
              <PdfPage
@@ -1063,7 +1075,6 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
                highlightedIndexes={flatMatches}
                currentMatchIndex={currentMatchIndex}
                onPageMatchCalculated={handlePageMatchCalculated}
-               onVisible={setCurrentPageNum}
                initialStrokes={initialPageStrokes?.[i + 1]}
                onStrokesChange={handlePageStrokesChange}
                straightLine={straightLine}

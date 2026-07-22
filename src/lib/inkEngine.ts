@@ -230,7 +230,9 @@ export const PEN_META: Record<PenType, { label: string }> = {
 
 // 필압(0~1)을 펜 종류별 곡선으로 굵기에 매핑. 마우스(pressure=0)는 0.5로 폴백.
 export function widthForPressure(model: PenModel, pressure: number): number {
-  const p = pressure > 0 ? pressure : 0.5;
+  // 마우스(=0)는 0.5로 폴백. 펜을 뗄 때 필압이 0 근처로 급락하면 머리카락처럼 얇은 선이
+  // 생겨 획이 끊겨 보이므로 하한(0.25)을 둔다.
+  const p = pressure > 0 ? Math.max(pressure, 0.25) : 0.5;
   switch (model.type) {
     case 'pen':         return model.baseWidth * (0.5 + p * model.pressureGain);
     case 'pencil':      return model.baseWidth * (0.7 + p * model.pressureGain * 0.4);
@@ -274,12 +276,17 @@ export function renderStrokeSmoothed(ctx: CanvasRenderingContext2D, stroke: Smoo
   for (let i = 0; i < segCount; i++) cum[i + 1] = cum[i] + Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
   const total = cum[segCount];
   let avgW = 0; for (const s of segs) avgW += s.width; avgW /= segCount;
-  const taperLen = Math.min(total / 2, Math.max(5, avgW * 2.5));
+  // 테이퍼 구간을 넉넉히(획 길이의 20% 이내, 굵기의 6배 이내) 잡고 smoothstep으로 부드럽게 이어
+  // "중간에서 갑자기 뚝 얇아지는" 느낌을 없앤다. 하한도 0.65로 올려, 펜을 뗄 때 이미 얇아진
+  // 필압 굵기와 겹쳐 과하게 가늘어지는 것을 막는다.
+  const taperLen = Math.min(total * 0.2, Math.max(8, avgW * 6));
   const tw = (i: number): number => {
     if (taperLen <= 0) return segs[i].width;
     const c = (cum[i] + cum[i + 1]) / 2;            // 세그먼트 중앙의 경로 위치
     const d = Math.min(c, total - c);               // 가까운 끝까지 거리
-    return segs[i].width * (0.5 + 0.5 * Math.min(1, d / taperLen)); // 끝 0.5배 → 안쪽 1배
+    const t = Math.min(1, d / taperLen);
+    const eased = t * t * (3 - 2 * t);              // smoothstep — 급격한 꺾임 제거
+    return segs[i].width * (0.65 + 0.35 * eased);   // 끝 0.65배 → 안쪽 1배
   };
 
   ctx.save();
