@@ -24,6 +24,7 @@ interface PenToolbarProps {
   activePen: PenModel;
   setActiveType: (t: PenType) => void;
   updateActivePen: (patch: Partial<PenModel>) => void;
+  onOpenChange?: (open: boolean) => void; // 팝오버 열림/닫힘 알림(부모가 툴바 가로스크롤을 잠깐 끄는 용도)
 }
 
 // 값 버블이 달린 슬라이더 (삼성노트식). trackBg를 주면 트랙 배경으로 쓴다(투명도 그라디언트 등).
@@ -57,17 +58,18 @@ function BubbleSlider({
   );
 }
 
-export function PenToolbar({ activeType, activePen, setActiveType, updateActivePen }: PenToolbarProps) {
+export function PenToolbar({ activeType, activePen, setActiveType, updateActivePen, onOpenChange }: PenToolbarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false); // 팝오버 안 색상 상세 선택기 펼침
   const [detailOrig, setDetailOrig] = useState('#000000');
 
+  const openPopover = (v: boolean) => { setPopoverOpen(v); onOpenChange?.(v); };
   const handlePick = (t: PenType) => {
     if (t === activeType) {
-      setPopoverOpen((o) => !o); // 활성 펜 재탭 → 팝오버 토글
+      openPopover(!popoverOpen); // 활성 펜 재탭 → 팝오버 토글
     } else {
       setActiveType(t);
-      setPopoverOpen(true);
+      openPopover(true);
     }
   };
 
@@ -108,7 +110,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
       {/* 팝오버 (삼성노트 스타일) — 펜 물성만 */}
       {popoverOpen && (
         <>
-          <div className="fixed inset-0 z-20" onClick={() => { setPopoverOpen(false); setDetailOpen(false); }} />
+          <div className="fixed inset-0 z-20" onClick={() => { openPopover(false); setDetailOpen(false); }} />
           <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 z-30 max-h-[80vh] overflow-y-auto">
             {/* 헤더: 실사풍 펜촉으로 종류 선택 */}
             <div className="flex items-end justify-around gap-1 px-1 pt-1 pb-2 border-b border-slate-100">

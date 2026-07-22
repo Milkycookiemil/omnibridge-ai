@@ -154,6 +154,10 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const [straightLine, setStraightLine] = useState(false); // #4 자(직선)
   const [shapeMode, setShapeMode] = useState(false); // #4 도형 보정
   const [canUndo, setCanUndo] = useState(false);
+  // 툴바 가로 스크롤은 팝오버가 열려 있을 땐 끈다(overflow가 팝오버를 잘라내기 때문).
+  const [penPopoverOpen, setPenPopoverOpen] = useState(false);
+  const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
+  const toolPopoverOpen = penPopoverOpen || colorPopoverOpen;
   const [canRedo, setCanRedo] = useState(false);
   // 필기 도구는 상호 배타(하나 켜면 나머지 끔). 펜 그리기로 돌아가려면 전부 off.
   const pickTool = (tool: 'pen' | 'select' | 'straight' | 'shape') => {
@@ -522,7 +526,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   // ── 공유 조각 (Nielsen #4 일관성: 태블릿/노트북이 같은 토큰을 재사용) ──
 
   const recordButton = (
-    <div className="flex items-center gap-4">
+    <div className="flex items-center gap-2 shrink-0">
       {isRecording && (
         <div className="flex gap-1 items-center">
           {[...Array(5)].map((_, i) => (
@@ -538,12 +542,12 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       <RecordSourcePopover disabled={isRecording} />
       <button
         onClick={toggleRecording}
-        className={cn("flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm transition-colors shadow-sm",
+        className={cn("flex items-center gap-2 px-3.5 py-2 rounded-full font-bold text-sm whitespace-nowrap shrink-0 transition-colors shadow-sm",
           isRecording ? "bg-red-50 text-red-600 border border-red-200" : "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200"
         )}
       >
         {isRecording ? <Square className="w-4 h-4 fill-current" /> : <Mic className="w-4 h-4" />}
-        {isRecording ? `REC ${formatTime(recordingTime)}` : "녹음 시작"}
+        {isRecording ? `REC ${formatTime(recordingTime)}` : "녹음"}
       </button>
     </div>
   );
@@ -598,7 +602,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       {isCanvasNote && (
         <>
           <div className="px-4 py-1.5 flex items-center justify-between border-b border-slate-200 relative z-20 bg-white/80 backdrop-blur-md">
-            <div className="flex items-center gap-1.5">
+            <div className={cn('flex items-center gap-1.5 min-w-0 flex-1 [&>*]:shrink-0',
+              toolPopoverOpen ? 'overflow-visible' : 'overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden')}>
               {/* #3 실행취소/다시실행 */}
               <button onClick={() => inkRef.current?.undo()} disabled={!canUndo} title="실행취소 (Undo)"
                 className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Undo2 className="w-5 h-5" /></button>
@@ -606,6 +611,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
                 className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Redo2 className="w-5 h-5" /></button>
               <div className="w-px h-6 bg-slate-200 mx-0.5" />
               <PenToolbar
+                onOpenChange={setPenPopoverOpen}
                 activeType={activeType}
                 activePen={activePen}
                 setActiveType={(t) => { pickTool('pen'); setActiveType(t); }}
@@ -614,6 +620,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
               <div className="w-px h-6 bg-slate-200 mx-0.5" />
               {/* 3색 퀵 팔레트(즐겨찾기) — 올가미 바로 왼쪽. 클릭=적용/우클릭=현재색 저장 */}
               <QuickColorPalette
+                onOpenChange={setColorPopoverOpen}
                 activeColor={activePen.color}
                 onPick={(c) => { pickTool('pen'); updateActivePen({ color: c }); }}
               />

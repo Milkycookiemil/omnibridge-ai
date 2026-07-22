@@ -24,12 +24,13 @@ const LONG_PRESS_MS = 600;
 interface QuickColorPaletteProps {
   activeColor: string;
   onPick: (color: string) => void;
+  onOpenChange?: (open: boolean) => void; // 상세 선택기 열림/닫힘 알림
 }
 
 // 상세 선택기 대상: 특정 즐겨찾기 슬롯(number) 또는 즐겨찾기와 무관한 자유 선택('free').
 type DetailTarget = number | 'free' | null;
 
-export function QuickColorPalette({ activeColor, onPick }: QuickColorPaletteProps) {
+export function QuickColorPalette({ activeColor, onPick, onOpenChange }: QuickColorPaletteProps) {
   const { favoriteColors, setFavoriteColor } = usePreferences();
   const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -37,7 +38,9 @@ export function QuickColorPalette({ activeColor, onPick }: QuickColorPaletteProp
   const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressClickRef = useRef(false); // 저장이 발동했으면 이어지는 click(적용)은 무시
   const [savedFlash, setSavedFlash] = useState<number | null>(null); // 저장 피드백(잠깐 반짝)
-  const [detailFor, setDetailFor] = useState<DetailTarget>(null);    // 상세 선택기 대상
+  const [detailForRaw, setDetailForRaw] = useState<DetailTarget>(null); // 상세 선택기 대상
+  const detailFor = detailForRaw;
+  const setDetailFor = (v: DetailTarget) => { setDetailForRaw(v); onOpenChange?.(v !== null); };
   const [detailOrig, setDetailOrig] = useState('#000000');           // 전/후 미리보기의 '전'
 
   const saveSlot = (i: number) => {
