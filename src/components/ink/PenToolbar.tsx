@@ -1,14 +1,11 @@
 // src/components/ink/PenToolbar.tsx
-// A-1 + 삼성노트 스타일 개편: 툴바(5종 아이콘) + 활성 펜 팝오버.
-// 팝오버는 실사풍 펜촉 헤더로 종류를 고르고, 숫자버블 두께 슬라이더·획 미리보기,
-// 형광펜 투명도(체커보드 그라디언트) 슬라이더, 색상 행+스포이드+256색을 제공한다.
+// A-1 + 삼성노트 스타일 툴바(5종 아이콘) + 활성 펜 팝오버.
+// 팝오버는 펜 물성만 담당한다: 실사풍 펜촉으로 종류 선택 + 획 미리보기 + 굵기/투명도/필압 슬라이더 + 지우개 모드.
+// 색상 선택은 별도 계통(퀵 팔레트 + ColorDetailPicker) 한 곳으로 통일됨 — 여기엔 색상 UI를 두지 않는다.
 import React, { useState } from 'react';
-import { Pen, Pencil, Brush, Highlighter, Eraser, Pipette } from 'lucide-react';
+import { Pen, Pencil, Brush, Highlighter, Eraser } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import {
-  PEN_COLORS, HIGHLIGHTER_COLORS, PEN_META,
-  type PenModel, type PenType,
-} from '../../lib/inkEngine';
+import { PEN_META, type PenModel, type PenType } from '../../lib/inkEngine';
 import { PenTip } from './PenTip';
 
 const PEN_ICONS: Record<PenType, React.FC<any>> = {
@@ -20,34 +17,6 @@ const PEN_ICONS: Record<PenType, React.FC<any>> = {
 };
 
 const ORDER: PenType[] = ['pen', 'pencil', 'brush', 'highlighter', 'eraser'];
-
-// 256색 전문가 팔레트 (16×16). 마지막 열은 무채색(흰→검).
-const EXPERT_COLORS: string[] = (() => {
-  const out: string[] = [];
-  for (let r = 0; r < 16; r++) {
-    for (let c = 0; c < 16; c++) {
-      if (c === 15) {
-        out.push(`hsl(0,0%,${Math.round(100 - (r / 15) * 100)}%)`);
-      } else {
-        const hue = Math.round((c / 15) * 360);
-        const light = Math.round(90 - (r / 15) * 78);
-        out.push(`hsl(${hue},75%,${light}%)`);
-      }
-    }
-  }
-  return out;
-})();
-
-// 임의 CSS 색을 네이티브 색상 입력(type=color)이 요구하는 #rrggbb로 정규화
-function toHex(color: string): string {
-  if (/^#[0-9a-f]{6}$/i.test(color)) return color;
-  const ctx = document.createElement('canvas').getContext('2d');
-  if (!ctx) return '#000000';
-  ctx.fillStyle = color;
-  return /^#[0-9a-f]{6}$/i.test(ctx.fillStyle) ? ctx.fillStyle : '#000000';
-}
-
-const hasEyeDropper = typeof window !== 'undefined' && typeof (window as any).EyeDropper === 'function';
 
 interface PenToolbarProps {
   activeType: PenType;
@@ -69,7 +38,7 @@ function BubbleSlider({
   return (
     <div className="relative pt-7">
       <div
-        className="absolute top-0 -translate-x-1/2 min-w-[34px] px-1.5 h-6 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-[11px] font-bold text-slate-700 tabular-nums pointer-events-none"
+        className="absolute top-0 -translate-x-1/2 min-w-[34px] px-1.5 h-6 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-xs font-bold text-slate-700 tabular-nums pointer-events-none"
         style={{ left: bubbleLeft }}
       >
         {format(value)}
@@ -89,7 +58,6 @@ function BubbleSlider({
 
 export function PenToolbar({ activeType, activePen, setActiveType, updateActivePen }: PenToolbarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const [showExpert, setShowExpert] = useState(false);
 
   const handlePick = (t: PenType) => {
     if (t === activeType) {
@@ -102,19 +70,10 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
 
   const isEraser = activeType === 'eraser';
   const showPressure = activeType === 'pen' || activeType === 'pencil' || activeType === 'brush';
-  const palette = activeType === 'highlighter' ? HIGHLIGHTER_COLORS : PEN_COLORS;
-
-  const pickEyeDropper = async () => {
-    try {
-      const ed = new (window as any).EyeDropper();
-      const res = await ed.open();
-      if (res?.sRGBHex) updateActivePen({ color: res.sRGBHex });
-    } catch { /* 사용자가 취소 */ }
-  };
 
   return (
     <div className="relative">
-      <div className="flex gap-1.5 items-center">
+      <div className="flex gap-1 items-center">
         {ORDER.map((t) => {
           const Icon = PEN_ICONS[t];
           const active = t === activeType;
@@ -124,15 +83,16 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
               onClick={() => handlePick(t)}
               title={PEN_META[t].label}
               className={cn(
-                "p-2 rounded-lg transition-colors relative",
-                active ? "bg-slate-100 text-slate-800" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+                // 히트 영역 44px(실터치 여유) — 아이콘은 그대로, 눌리는 범위만 확보.
+                "min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors relative",
+                active ? "bg-slate-100 text-slate-800" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
               )}
             >
               <Icon className="w-5 h-5" />
               {/* 활성 펜의 현재 색을 점으로 표시 (지우개 제외) */}
               {active && t !== 'eraser' && (
                 <span
-                  className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-3 h-1 rounded-full"
+                  className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-1 rounded-full"
                   style={{ backgroundColor: activePen.color }}
                 />
               )}
@@ -141,7 +101,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
         })}
       </div>
 
-      {/* 팝오버 (삼성노트 스타일) */}
+      {/* 팝오버 (삼성노트 스타일) — 펜 물성만 */}
       {popoverOpen && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setPopoverOpen(false)} />
@@ -154,7 +114,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
                 return (
                   <button
                     key={t}
-                    onClick={() => { setActiveType(t); setShowExpert(false); }}
+                    onClick={() => setActiveType(t)}
                     title={PEN_META[t].label}
                     className={cn('relative transition-all', active ? '-translate-y-1' : 'opacity-70 hover:opacity-100')}
                   >
@@ -185,7 +145,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
 
               {/* 굵기 */}
               <div>
-                <div className="text-[11px] font-bold text-slate-400 mb-0.5">굵기</div>
+                <div className="text-xs font-bold text-slate-500 mb-0.5">굵기</div>
                 <BubbleSlider
                   min={1} max={isEraser ? 40 : 30} step={1}
                   value={activePen.baseWidth}
@@ -197,7 +157,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
               {/* 투명도 (지우개 외) — 체커보드 위 색 그라디언트 */}
               {!isEraser && (
                 <div>
-                  <div className="text-[11px] font-bold text-slate-400 mb-0.5">투명도</div>
+                  <div className="text-xs font-bold text-slate-500 mb-0.5">투명도</div>
                   <BubbleSlider
                     min={0.1} max={1} step={0.05}
                     value={activePen.opacity}
@@ -212,7 +172,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
               {/* 필압 감도 */}
               {showPressure && (
                 <div>
-                  <div className="text-[11px] font-bold text-slate-400 mb-0.5">필압 감도</div>
+                  <div className="text-xs font-bold text-slate-500 mb-0.5">필압 감도</div>
                   <BubbleSlider
                     min={0} max={3} step={0.1}
                     value={activePen.pressureGain}
@@ -226,80 +186,30 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
               {/* 지우개 모드 */}
               {isEraser && (
                 <div>
-                  <div className="text-[11px] font-bold text-slate-400 mb-2">지우개 모드</div>
+                  <div className="text-xs font-bold text-slate-500 mb-2">지우개 모드</div>
                   <div className="flex gap-1.5">
                     {(['area', 'stroke'] as const).map((m) => (
                       <button
                         key={m}
                         onClick={() => updateActivePen({ eraserMode: m })}
-                        className={cn('flex-1 py-1.5 text-[11px] font-bold rounded-lg border transition-colors',
+                        className={cn('flex-1 py-2 text-xs font-bold rounded-lg border transition-colors',
                           (activePen.eraserMode ?? 'area') === m
                             ? 'bg-slate-800 text-white border-slate-800'
-                            : 'border-slate-200 text-slate-500 hover:bg-slate-50')}
+                            : 'border-slate-200 text-slate-600 hover:bg-slate-50')}
                       >
                         {m === 'area' ? '영역 지우기' : '획 지우기'}
                       </button>
                     ))}
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1.5 leading-snug">
+                  <p className="text-xs text-slate-500 mt-1.5 leading-snug">
                     {(activePen.eraserMode ?? 'area') === 'area' ? '문지른 영역의 잉크를 지웁니다.' : '스치기만 해도 획을 통째로 지웁니다.'}
                   </p>
                 </div>
               )}
 
-              {/* 색상 */}
+              {/* 색상은 툴바의 퀵 팔레트에서 고른다(중복 제거). */}
               {!isEraser && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-bold text-slate-400">색상</span>
-                    <div className="flex items-center gap-1.5">
-                      {hasEyeDropper && (
-                        <button onClick={pickEyeDropper} title="화면에서 색 추출(스포이드)" className="w-6 h-6 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 flex items-center justify-center">
-                          <Pipette className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      <label
-                        className="w-6 h-6 rounded-md border border-slate-200 cursor-pointer overflow-hidden flex items-center justify-center"
-                        title="팔레트에서 직접 선택"
-                        style={{ background: 'conic-gradient(red,#ff0,lime,aqua,blue,magenta,red)' }}
-                      >
-                        <input type="color" value={toHex(activePen.color)} onChange={(e) => updateActivePen({ color: e.target.value })} className="opacity-0 w-0 h-0" />
-                      </label>
-                      <button
-                        onClick={() => setShowExpert((v) => !v)}
-                        className={cn('text-[10px] font-bold px-2 py-1 rounded-md border transition-colors',
-                          showExpert ? 'bg-slate-800 text-white border-slate-800' : 'border-slate-200 text-slate-500 hover:bg-slate-50')}
-                      >
-                        256색
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 flex-wrap">
-                    {palette.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => updateActivePen({ color: c })}
-                        className={cn('w-7 h-7 rounded-full border-2 transition-all shadow-sm',
-                          activePen.color === c ? 'border-slate-400 scale-110' : 'border-transparent hover:scale-105')}
-                        style={{ backgroundColor: c }}
-                      />
-                    ))}
-                  </div>
-                  {showExpert && (
-                    <div className="mt-3 grid gap-0.5 p-1.5 bg-slate-50 rounded-lg border border-slate-200" style={{ gridTemplateColumns: 'repeat(16, 1fr)' }}>
-                      {EXPERT_COLORS.map((c, i) => (
-                        <button
-                          key={i}
-                          onClick={() => updateActivePen({ color: c })}
-                          title={c}
-                          className={cn('w-full aspect-square rounded-[2px] hover:scale-[1.6] hover:z-10 transition-transform relative',
-                            activePen.color === c ? 'ring-2 ring-slate-800 z-10' : '')}
-                          style={{ backgroundColor: c }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <p className="text-xs text-slate-400 leading-snug pt-0.5">색은 툴바의 <span className="font-bold text-slate-500">퀵 팔레트</span>에서 고르세요 — 스와치를 다시 누르면 상세 선택기가 열립니다.</p>
               )}
             </div>
           </div>
