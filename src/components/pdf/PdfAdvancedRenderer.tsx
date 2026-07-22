@@ -853,9 +853,9 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
       {/* 공용 펜 툴바 + 도구(빈 노트와 동일: 5종 펜 · undo/redo · 올가미 · 자 · 도형) */}
       <div className="absolute top-[4.5rem] left-4 z-40 bg-white rounded-xl border border-slate-200 shadow-lg px-3 py-2 flex items-center gap-1.5">
          <button onClick={() => pageHandlesRef.current.get(currentPageNum)?.undo()} disabled={!pageHist[currentPageNum]?.canUndo} title="실행취소"
-           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Undo2 className="w-5 h-5" /></button>
+           className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Undo2 className="w-5 h-5" /></button>
          <button onClick={() => pageHandlesRef.current.get(currentPageNum)?.redo()} disabled={!pageHist[currentPageNum]?.canRedo} title="다시실행"
-           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Redo2 className="w-5 h-5" /></button>
+           className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Redo2 className="w-5 h-5" /></button>
          <div className="w-px h-6 bg-slate-200 mx-0.5" />
          <PenToolbar
            activeType={activeType}
@@ -871,11 +871,11 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
          />
          <div className="w-px h-6 bg-slate-200 mx-0.5" />
          <button onClick={() => pickTool(selectMode ? 'pen' : 'select')} title="올가미 선택"
-           className={cn("min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors", selectMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Lasso className="w-5 h-5" /></button>
+           className={cn("w-9 h-9 flex items-center justify-center rounded-lg transition-colors", selectMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Lasso className="w-5 h-5" /></button>
          <button onClick={() => pickTool(straightLine ? 'pen' : 'straight')} title="자 (반듯한 직선)"
-           className={cn("min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors", straightLine ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Ruler className="w-5 h-5" /></button>
+           className={cn("w-9 h-9 flex items-center justify-center rounded-lg transition-colors", straightLine ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Ruler className="w-5 h-5" /></button>
          <button onClick={() => pickTool(shapeMode ? 'pen' : 'shape')} title="도형 보정"
-           className={cn("min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors", shapeMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Shapes className="w-5 h-5" /></button>
+           className={cn("w-9 h-9 flex items-center justify-center rounded-lg transition-colors", shapeMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Shapes className="w-5 h-5" /></button>
       </div>
 
       {/* Scrollable Document Area — 줌 시 가로 스크롤(overflow-auto) + w-max 래퍼로 좌우 대칭 스크롤 보장 */}

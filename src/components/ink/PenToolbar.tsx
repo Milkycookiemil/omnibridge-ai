@@ -1,12 +1,13 @@
 // src/components/ink/PenToolbar.tsx
 // A-1 + 삼성노트 스타일 툴바(5종 아이콘) + 활성 펜 팝오버.
-// 팝오버는 펜 물성만 담당한다: 실사풍 펜촉으로 종류 선택 + 획 미리보기 + 굵기/투명도/필압 슬라이더 + 지우개 모드.
-// 색상 선택은 별도 계통(퀵 팔레트 + ColorDetailPicker) 한 곳으로 통일됨 — 여기엔 색상 UI를 두지 않는다.
+// 팝오버: 펜촉 종류 선택 + 획 미리보기 + 굵기/투명도/필압 + 지우개 모드 + 색상(6프리셋 + '상세').
+// '상세'는 툴바 퀵 팔레트와 '동일한' ColorDetailPicker를 연다(고급 색 선택기 단일화). 낡은 256격자·중복 네이티브 입력은 제거.
 import React, { useState } from 'react';
-import { Pen, Pencil, Brush, Highlighter, Eraser } from 'lucide-react';
+import { Pen, Pencil, Brush, Highlighter, Eraser, Palette } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { PEN_META, type PenModel, type PenType } from '../../lib/inkEngine';
+import { PEN_COLORS, HIGHLIGHTER_COLORS, PEN_META, type PenModel, type PenType } from '../../lib/inkEngine';
 import { PenTip } from './PenTip';
+import { ColorDetailPicker } from './ColorDetailPicker';
 
 const PEN_ICONS: Record<PenType, React.FC<any>> = {
   pen: Pen,
@@ -58,6 +59,8 @@ function BubbleSlider({
 
 export function PenToolbar({ activeType, activePen, setActiveType, updateActivePen }: PenToolbarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false); // 팝오버 안 색상 상세 선택기 펼침
+  const [detailOrig, setDetailOrig] = useState('#000000');
 
   const handlePick = (t: PenType) => {
     if (t === activeType) {
@@ -70,6 +73,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
 
   const isEraser = activeType === 'eraser';
   const showPressure = activeType === 'pen' || activeType === 'pencil' || activeType === 'brush';
+  const palette = activeType === 'highlighter' ? HIGHLIGHTER_COLORS : PEN_COLORS;
 
   return (
     <div className="relative">
@@ -84,7 +88,7 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
               title={PEN_META[t].label}
               className={cn(
                 // 히트 영역 44px(실터치 여유) — 아이콘은 그대로, 눌리는 범위만 확보.
-                "min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors relative",
+                "w-9 h-9 flex items-center justify-center rounded-lg transition-colors relative",
                 active ? "bg-slate-100 text-slate-800" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
               )}
             >
@@ -104,8 +108,8 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
       {/* 팝오버 (삼성노트 스타일) — 펜 물성만 */}
       {popoverOpen && (
         <>
-          <div className="fixed inset-0 z-20" onClick={() => setPopoverOpen(false)} />
-          <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 z-30">
+          <div className="fixed inset-0 z-20" onClick={() => { setPopoverOpen(false); setDetailOpen(false); }} />
+          <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 z-30 max-h-[80vh] overflow-y-auto">
             {/* 헤더: 실사풍 펜촉으로 종류 선택 */}
             <div className="flex items-end justify-around gap-1 px-1 pt-1 pb-2 border-b border-slate-100">
               {ORDER.map((t) => {
@@ -207,9 +211,41 @@ export function PenToolbar({ activeType, activePen, setActiveType, updateActiveP
                 </div>
               )}
 
-              {/* 색상은 툴바의 퀵 팔레트에서 고른다(중복 제거). */}
+              {/* 색상: 6프리셋(빠른 선택) + '상세'(툴바 퀵 팔레트와 동일한 ColorDetailPicker). 낡은 256격자·중복 네이티브 입력 제거. */}
               {!isEraser && (
-                <p className="text-xs text-slate-400 leading-snug pt-0.5">색은 툴바의 <span className="font-bold text-slate-500">퀵 팔레트</span>에서 고르세요 — 스와치를 다시 누르면 상세 선택기가 열립니다.</p>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-500">색상</span>
+                    <button
+                      onClick={() => { setDetailOrig(activePen.color); setDetailOpen((v) => !v); }}
+                      title="색상 상세 선택기 (색상×명도 그리드 · HSV · 스포이드 · 최근색)"
+                      className={cn('flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-md border transition-colors',
+                        detailOpen ? 'bg-slate-800 text-white border-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50')}
+                    >
+                      <Palette className="w-3.5 h-3.5" /> 상세
+                    </button>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    {palette.map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => updateActivePen({ color: c })}
+                        className={cn('w-7 h-7 rounded-full border-2 transition-all shadow-sm',
+                          activePen.color === c ? 'border-slate-400 scale-110' : 'border-transparent hover:scale-105')}
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                  {detailOpen && (
+                    <div className="mt-3 flex justify-center">
+                      <ColorDetailPicker
+                        original={detailOrig}
+                        color={activePen.color}
+                        onChange={(hex) => updateActivePen({ color: hex })}
+                      />
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

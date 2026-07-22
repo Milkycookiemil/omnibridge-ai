@@ -94,7 +94,7 @@ export function QuickColorPalette({ activeColor, onPick }: QuickColorPaletteProp
             onPointerUp={cancelPress}
             onPointerCancel={cancelPress}
             title={`즐겨찾기 색 ${i + 1} · 다시 누르면 상세 선택`}
-            className="relative min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg group touch-none select-none"
+            className="relative w-9 h-9 flex items-center justify-center rounded-lg group touch-none select-none"
             style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' } as React.CSSProperties}
           >
             <span
@@ -118,7 +118,7 @@ export function QuickColorPalette({ activeColor, onPick }: QuickColorPaletteProp
         onClick={openFreePalette}
         title="팔레트 — 원하는 색을 직접 선택"
         className={cn(
-          'min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors',
+          'w-9 h-9 flex items-center justify-center rounded-lg transition-colors',
           detailFor === 'free' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
         )}
       >

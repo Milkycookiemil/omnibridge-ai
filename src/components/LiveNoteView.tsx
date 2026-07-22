@@ -580,13 +580,13 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
 
       {isCanvasNote && (
         <>
-          <div className="p-4 flex items-center justify-between border-b border-slate-200 relative z-20 bg-white/80 backdrop-blur-md">
+          <div className="px-4 py-1.5 flex items-center justify-between border-b border-slate-200 relative z-20 bg-white/80 backdrop-blur-md">
             <div className="flex items-center gap-1.5">
               {/* #3 실행취소/다시실행 */}
               <button onClick={() => inkRef.current?.undo()} disabled={!canUndo} title="실행취소 (Undo)"
-                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Undo2 className="w-5 h-5" /></button>
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Undo2 className="w-5 h-5" /></button>
               <button onClick={() => inkRef.current?.redo()} disabled={!canRedo} title="다시실행 (Redo)"
-                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Redo2 className="w-5 h-5" /></button>
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"><Redo2 className="w-5 h-5" /></button>
               <div className="w-px h-6 bg-slate-200 mx-0.5" />
               <PenToolbar
                 activeType={activeType}
@@ -603,11 +603,11 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
               <div className="w-px h-6 bg-slate-200 mx-0.5" />
               {/* 올가미 / 자(직선) / 도형 보정 — 상호 배타, 재탭 시 펜으로 복귀 */}
               <button onClick={() => pickTool(selectMode ? 'pen' : 'select')} title="올가미 선택 (획을 감싸 → 이동·크기·색·복제·삭제)"
-                className={cn("min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors", selectMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Lasso className="w-5 h-5" /></button>
+                className={cn("w-9 h-9 flex items-center justify-center rounded-lg transition-colors", selectMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Lasso className="w-5 h-5" /></button>
               <button onClick={() => pickTool(straightLine ? 'pen' : 'straight')} title="자 (반듯한 직선, 각도 스냅)"
-                className={cn("min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors", straightLine ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Ruler className="w-5 h-5" /></button>
+                className={cn("w-9 h-9 flex items-center justify-center rounded-lg transition-colors", straightLine ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Ruler className="w-5 h-5" /></button>
               <button onClick={() => pickTool(shapeMode ? 'pen' : 'shape')} title="도형 보정 (자유곡선 → 직선·원·사각형)"
-                className={cn("min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors", shapeMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Shapes className="w-5 h-5" /></button>
+                className={cn("w-9 h-9 flex items-center justify-center rounded-lg transition-colors", shapeMode ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50")}><Shapes className="w-5 h-5" /></button>
             </div>
             {recordButton}
           </div>
