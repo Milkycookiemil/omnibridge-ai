@@ -57,10 +57,11 @@ interface InkCanvasProps {
 
 type SelBox = { x: number; y: number; w: number; h: number };
 type Selection = { ids: string[]; box: SelBox };
+type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'; // 8방향 크기조절 핸들
 type DragState =
   | { mode: 'lasso' }
   | { mode: 'move'; start: { x: number; y: number }; baseBox: SelBox }
-  | { mode: 'scale'; anchor: { x: number; y: number }; baseBox: SelBox };
+  | { mode: 'scale'; handle: Handle; baseBox: SelBox };
 
 export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function InkCanvas(
   { pen, width = 800, height = 800, className, backgroundStyle, backgroundImage, onDelta, showLayers = false, selectMode = false, straightLine = false, shapeMode = false, onHistoryChange, strokeTime, onStrokeTap, controlsBottomInset = 0, onStructureChange },
@@ -236,6 +237,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
 
   // --- 올가미 선택 상태 ---
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [selCursor, setSelCursor] = useState<string>('crosshair'); // 선택 모드 커서(핸들 위=방향별 리사이즈)
   const selectionRef = useRef<Selection | null>(null);
   const selectedIdsRef = useRef<Set<string>>(new Set());
   const previewRef = useRef<null | { kind: 'move'; dx: number; dy: number } | { kind: 'scale'; ax: number; ay: number; sx: number; sy: number }>(null);
@@ -754,6 +756,44 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
   };
 
   const HANDLE_HIT = 16; // 리사이즈 핸들 히트 반경(표시 px)
+  // 8방향 크기조절 헬퍼(캔버스 논리 px). 모서리(nw/ne/sw/se)=비율 유지, 변(n/s/e/w)=한 축만.
+  const HANDLES: Handle[] = ['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w']; // 모서리 우선 검사
+  const handlePos = (b: SelBox): Record<Handle, { x: number; y: number }> => ({
+    nw: { x: b.x, y: b.y }, n: { x: b.x + b.w / 2, y: b.y }, ne: { x: b.x + b.w, y: b.y },
+    e: { x: b.x + b.w, y: b.y + b.h / 2 }, se: { x: b.x + b.w, y: b.y + b.h },
+    s: { x: b.x + b.w / 2, y: b.y + b.h }, sw: { x: b.x, y: b.y + b.h }, w: { x: b.x, y: b.y + b.h / 2 },
+  });
+  const cursorForHandle = (h: Handle) =>
+    h === 'nw' || h === 'se' ? 'nwse-resize' : h === 'ne' || h === 'sw' ? 'nesw-resize' : h === 'n' || h === 's' ? 'ns-resize' : 'ew-resize';
+  const computeScale = (handle: Handle, b: SelBox, pt: { x: number; y: number }) => {
+    const minPx = 8 / dispScale; // 최소 크기(논리 px) — 뒤집힘/0 방지
+    const right = b.x + b.w, bottom = b.y + b.h;
+    const corner = handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se';
+    const ax = (handle === 'nw' || handle === 'w' || handle === 'sw') ? right : b.x;
+    const ay = (handle === 'nw' || handle === 'n' || handle === 'ne') ? bottom : b.y;
+    let sx = 1, sy = 1;
+    if (corner) {
+      const dxr = Math.max(Math.abs(pt.x - ax), minPx) / (b.w || minPx);
+      const dyr = Math.max(Math.abs(pt.y - ay), minPx) / (b.h || minPx);
+      const s = Math.max(dxr, dyr); sx = s; sy = s; // 비율 유지
+    } else if (handle === 'e' || handle === 'w') {
+      sx = Math.max(Math.abs(pt.x - ax), minPx) / (b.w || minPx);
+    } else {
+      sy = Math.max(Math.abs(pt.y - ay), minPx) / (b.h || minPx);
+    }
+    return { ax, ay, sx, sy, box: { x: ax + (b.x - ax) * sx, y: ay + (b.y - ay) * sy, w: b.w * sx, h: b.h * sy } };
+  };
+  const updateHoverCursor = (pt: { x: number; y: number }) => {
+    const sel = selectionRef.current;
+    let cur = 'crosshair';
+    if (sel) {
+      const hitR = HANDLE_HIT / dispScale;
+      const pos = handlePos(sel.box);
+      for (const h of HANDLES) if (Math.abs(pt.x - pos[h].x) <= hitR && Math.abs(pt.y - pos[h].y) <= hitR) { cur = cursorForHandle(h); break; }
+      if (cur === 'crosshair' && pt.x >= sel.box.x && pt.x <= sel.box.x + sel.box.w && pt.y >= sel.box.y && pt.y <= sel.box.y + sel.box.h) cur = 'move';
+    }
+    setSelCursor((prev) => (prev === cur ? prev : cur));
+  };
   const drawLasso = () => {
     composite();
     const ctx = getActiveCanvas()?.getContext('2d');
@@ -770,11 +810,15 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     const sel = selectionRef.current;
     if (sel) {
       const hitR = HANDLE_HIT / dispScale;
-      const cx = sel.box.x + sel.box.w, cy = sel.box.y + sel.box.h;
-      if (Math.abs(pt.x - cx) <= hitR && Math.abs(pt.y - cy) <= hitR) {
-        dragRef.current = { mode: 'scale', anchor: { x: sel.box.x, y: sel.box.y }, baseBox: { ...sel.box } }; return;
+      const pos = handlePos(sel.box);
+      for (const h of HANDLES) {
+        if (Math.abs(pt.x - pos[h].x) <= hitR && Math.abs(pt.y - pos[h].y) <= hitR) {
+          dragRef.current = { mode: 'scale', handle: h, baseBox: { ...sel.box } };
+          setSelCursor(cursorForHandle(h));
+          return;
+        }
       }
-      if (pt.x >= sel.box.x && pt.x <= cx && pt.y >= sel.box.y && pt.y <= cy) {
+      if (pt.x >= sel.box.x && pt.x <= sel.box.x + sel.box.w && pt.y >= sel.box.y && pt.y <= sel.box.y + sel.box.h) {
         dragRef.current = { mode: 'move', start: pt, baseBox: { ...sel.box } }; return;
       }
     }
@@ -790,15 +834,11 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       setSelection((s) => s ? { ...s, box: { x: d.baseBox.x + dx, y: d.baseBox.y + dy, w: d.baseBox.w, h: d.baseBox.h } } : s);
       return;
     }
-    if (d.mode === 'scale') {
-      const minSize = 8 / dispScale;
-      const sx = Math.max(pt.x - d.anchor.x, minSize) / d.baseBox.w;
-      const sy = Math.max(pt.y - d.anchor.y, minSize) / d.baseBox.h;
-      previewRef.current = { kind: 'scale', ax: d.anchor.x, ay: d.anchor.y, sx, sy };
-      rebuildLayer(activeLayerRef.current); composite();
-      setSelection((s) => s ? { ...s, box: { x: d.anchor.x, y: d.anchor.y, w: d.baseBox.w * sx, h: d.baseBox.h * sy } } : s);
-      return;
-    }
+    // scale: 반대편 앵커 고정, 잡은 핸들 방향으로. 모서리=비율 유지.
+    const r = computeScale(d.handle, d.baseBox, pt);
+    previewRef.current = { kind: 'scale', ax: r.ax, ay: r.ay, sx: r.sx, sy: r.sy };
+    rebuildLayer(activeLayerRef.current); composite();
+    setSelection((s) => s ? { ...s, box: r.box } : s);
   };
   const handleSelectUp = () => {
     const d = dragRef.current; dragRef.current = null;
@@ -917,7 +957,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
       if (penModeRef.current || touchNavRef.current) return; // 펜모드 손가락/내비 중 → 그리기 안 함
       // 손가락 사용자 1손가락 그리기 → 아래로 진행
     }
-    if (selectMode) { if (dragRef.current) handleSelectMove(toCanvasCoords(e)); return; }
+    if (selectMode) { const cp = toCanvasCoords(e); if (dragRef.current) handleSelectMove(cp); else if (e.pointerType !== 'touch') updateHoverCursor(cp); return; }
     if (!drawingRef.current) return;
     const pts = coalescedCanvasPoints(e); // 고주사율: 중간 점들까지 전부
 
@@ -1047,7 +1087,7 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
     onPointerCancel: handlePointerUp, // 브라우저가 제스처를 취소(멀티터치 등)할 때 상태 정리
     onPointerLeave: handlePointerUp,
   };
-  const canvasCursor = { cursor: selectMode ? 'crosshair' : cursorForPen(pen, dispScale) };
+  const canvasCursor = { cursor: selectMode ? selCursor : cursorForPen(pen, dispScale) };
   const pageOverlays = (
     <>
       {/* P1: 전사 라인 클릭 시 그 시각에 그린 획 영역을 잠깐 하이라이트 */}
@@ -1064,10 +1104,14 @@ export const InkCanvas = forwardRef<InkCanvasHandle, InkCanvasProps>(function In
             className="absolute border-2 border-blue-500 border-dashed rounded-sm pointer-events-none z-[15]"
             style={{ left: selection.box.x * dispScale, top: selection.box.y * dispScale, width: selection.box.w * dispScale, height: selection.box.h * dispScale }}
           />
-          <div
-            className="absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-sm pointer-events-none z-[16]"
-            style={{ left: (selection.box.x + selection.box.w) * dispScale - 6, top: (selection.box.y + selection.box.h) * dispScale - 6 }}
-          />
+          {/* 8방향 크기조절 핸들(시각 단서 — 실제 드래그는 캔버스가 좌표로 감지) */}
+          {Object.entries(handlePos(selection.box)).map(([h, p]) => (
+            <div
+              key={h}
+              className="absolute w-2.5 h-2.5 bg-white border-2 border-blue-500 rounded-sm pointer-events-none z-[16]"
+              style={{ left: p.x * dispScale - 5, top: p.y * dispScale - 5 }}
+            />
+          ))}
           <div
             className="absolute flex items-center gap-1 bg-white rounded-xl shadow-lg border border-slate-200 px-2 py-1.5 z-20"
             style={{ left: selection.box.x * dispScale, top: Math.max(selection.box.y * dispScale - 46, 4) }}

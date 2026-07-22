@@ -143,11 +143,13 @@ const PdfPage: React.FC<PdfPageProps> = ({
 
   // ===== 올가미 선택 (비율좌표, 참조 기반) =====
   type PBox = { x: number; y: number; w: number; h: number };
+  type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'; // 8방향 크기조절 핸들
   const [selection, setSelection] = useState<{ strokes: PageStroke[]; box: PBox } | null>(null);
+  const [selCursor, setSelCursor] = useState<string>('crosshair'); // 선택 모드 커서(핸들 위=방향별 리사이즈)
   const selectionRef = useRef<{ strokes: PageStroke[]; box: PBox } | null>(null);
-  const selDragRef = useRef<null | { mode: 'lasso' } | { mode: 'move'; start: InkPoint; baseBox: PBox }>(null);
+  const selDragRef = useRef<null | { mode: 'lasso' } | { mode: 'move'; start: InkPoint; baseBox: PBox } | { mode: 'scale'; handle: Handle; baseBox: PBox }>(null);
   const selLassoRef = useRef<InkPoint[] | null>(null);
-  const selPreviewRef = useRef<null | { dx: number; dy: number }>(null);
+  const selPreviewRef = useRef<null | { kind: 'move'; dx: number; dy: number } | { kind: 'scale'; ax: number; ay: number; sx: number; sy: number }>(null);
   const applySel = (s: { strokes: PageStroke[]; box: PBox } | null) => { selectionRef.current = s; setSelection(s); };
 
   const pgPoints = (st: PageStroke) => (st.segs.length ? [st.segs[0].from, ...st.segs.map((s) => s.to)] : []);
@@ -159,6 +161,53 @@ const PdfPage: React.FC<PdfPageProps> = ({
   const pgTranslate = (st: PageStroke, dx: number, dy: number): PageStroke => ({
     ...st, segs: st.segs.map((s) => ({ from: { x: s.from.x + dx, y: s.from.y + dy }, to: { x: s.to.x + dx, y: s.to.y + dy }, width: s.width })),
   });
+  // 앵커(ax,ay) 기준 (sx,sy)배 확대/축소(비율좌표). 굵기는 평균 배율로 스케일(빈 노트 scaleStroke와 동일 규칙).
+  const pgScale = (st: PageStroke, ax: number, ay: number, sx: number, sy: number): PageStroke => {
+    const ws = (Math.abs(sx) + Math.abs(sy)) / 2;
+    const tp = (p: InkPoint) => ({ x: ax + (p.x - ax) * sx, y: ay + (p.y - ay) * sy });
+    return { ...st, segs: st.segs.map((s) => ({ from: tp(s.from), to: tp(s.to), width: Math.max(0.5, s.width * ws) })) };
+  };
+  // 8방향 크기조절 헬퍼(비율좌표). 모서리(nw/ne/sw/se)는 비율 유지, 변(n/s/e/w)은 한 축만.
+  const HANDLES: Handle[] = ['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w']; // 모서리 우선 검사
+  const MINR = 0.02; // 최소 크기(비율) — 뒤집힘/0 방지
+  const handlePos = (b: PBox): Record<Handle, InkPoint> => ({
+    nw: { x: b.x, y: b.y }, n: { x: b.x + b.w / 2, y: b.y }, ne: { x: b.x + b.w, y: b.y },
+    e: { x: b.x + b.w, y: b.y + b.h / 2 }, se: { x: b.x + b.w, y: b.y + b.h },
+    s: { x: b.x + b.w / 2, y: b.y + b.h }, sw: { x: b.x, y: b.y + b.h }, w: { x: b.x, y: b.y + b.h / 2 },
+  });
+  const cursorForHandle = (h: Handle) =>
+    h === 'nw' || h === 'se' ? 'nwse-resize' : h === 'ne' || h === 'sw' ? 'nesw-resize' : h === 'n' || h === 's' ? 'ns-resize' : 'ew-resize';
+  // 핸들·현재 박스·포인터 → 앵커(반대편 고정점)와 배율(sx,sy) + 새 박스. 모서리는 비율 유지(균등 배율).
+  const computeScale = (handle: Handle, b: PBox, pt: InkPoint) => {
+    const right = b.x + b.w, bottom = b.y + b.h;
+    const corner = handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se';
+    const ax = (handle === 'nw' || handle === 'w' || handle === 'sw') ? right : b.x; // 왼쪽 핸들이면 오른쪽 고정
+    const ay = (handle === 'nw' || handle === 'n' || handle === 'ne') ? bottom : b.y; // 위쪽 핸들이면 아래 고정
+    let sx = 1, sy = 1;
+    if (corner) {
+      const dxr = Math.max(Math.abs(pt.x - ax), MINR) / (b.w || MINR);
+      const dyr = Math.max(Math.abs(pt.y - ay), MINR) / (b.h || MINR);
+      const s = Math.max(dxr, dyr); sx = s; sy = s; // 비율 유지
+    } else if (handle === 'e' || handle === 'w') {
+      sx = Math.max(Math.abs(pt.x - ax), MINR) / (b.w || MINR);
+    } else {
+      sy = Math.max(Math.abs(pt.y - ay), MINR) / (b.h || MINR);
+    }
+    return { ax, ay, sx, sy, box: { x: ax + (b.x - ax) * sx, y: ay + (b.y - ay) * sy, w: b.w * sx, h: b.h * sy } };
+  };
+  // 선택 모드 hover 시 커서 갱신: 핸들 위=방향 리사이즈, 박스 안=이동, 그 외=십자.
+  const updateHoverCursor = (pt: InkPoint) => {
+    const sel = selectionRef.current;
+    let cur = 'crosshair';
+    if (sel) {
+      const rect = drawingCanvasRef.current?.getBoundingClientRect();
+      const hrx = rect ? 14 / rect.width : 0.025, hry = rect ? 14 / rect.height : 0.025;
+      const pos = handlePos(sel.box);
+      for (const h of HANDLES) if (Math.abs(pt.x - pos[h].x) <= hrx && Math.abs(pt.y - pos[h].y) <= hry) { cur = cursorForHandle(h); break; }
+      if (cur === 'crosshair' && pt.x >= sel.box.x && pt.x <= sel.box.x + sel.box.w && pt.y >= sel.box.y && pt.y <= sel.box.y + sel.box.h) cur = 'move';
+    }
+    setSelCursor((prev) => (prev === cur ? prev : cur));
+  };
 
   // P1: 전사→획 하이라이트(이 페이지에서 sec 근처에 그린 획 영역 반짝). 맞은 획 수 반환.
   const [pdfHighlight, setPdfHighlight] = useState<PBox | null>(null);
@@ -312,8 +361,10 @@ const PdfPage: React.FC<PdfPageProps> = ({
       const pv = selPreviewRef.current, selSet = pv && selectionRef.current ? new Set(selectionRef.current.strokes) : null;
       strokesRef.current.forEach(stroke => {
          if (!stroke || !stroke.segs || stroke.segs.length === 0) return;
-         // 이동 중인 선택 획은 변형본으로 미리보기(저장 데이터 불변)
-         const st = (selSet && pv && selSet.has(stroke)) ? pgTranslate(stroke, pv.dx, pv.dy) : stroke;
+         // 이동/크기조절 중인 선택 획은 변형본으로 미리보기(저장 데이터 불변)
+         const st = (selSet && pv && selSet.has(stroke))
+           ? (pv.kind === 'move' ? pgTranslate(stroke, pv.dx, pv.dy) : pgScale(stroke, pv.ax, pv.ay, pv.sx, pv.sy))
+           : stroke;
          renderStrokeSmoothed(ctx, {
            penType: st.penType, color: st.color, opacity: st.opacity,
            segs: st.segs.map(s => ({ from: { x: s.from.x * W, y: s.from.y * H }, to: { x: s.to.x * W, y: s.to.y * H }, width: s.width })),
@@ -378,17 +429,37 @@ const PdfPage: React.FC<PdfPageProps> = ({
   };
   const selectDown = (pt: InkPoint) => {
     const sel = selectionRef.current;
-    if (sel && pt.x >= sel.box.x && pt.x <= sel.box.x + sel.box.w && pt.y >= sel.box.y && pt.y <= sel.box.y + sel.box.h) {
-      selDragRef.current = { mode: 'move', start: pt, baseBox: { ...sel.box } }; return;
+    if (sel) {
+      // 8방향 핸들 먼저 검사(히트 반경 ≈14px → 비율 환산). 모서리 우선.
+      const rect = drawingCanvasRef.current?.getBoundingClientRect();
+      const hrx = rect ? 14 / rect.width : 0.025, hry = rect ? 14 / rect.height : 0.025;
+      const pos = handlePos(sel.box);
+      for (const h of HANDLES) {
+        if (Math.abs(pt.x - pos[h].x) <= hrx && Math.abs(pt.y - pos[h].y) <= hry) {
+          selDragRef.current = { mode: 'scale', handle: h, baseBox: { ...sel.box } };
+          setSelCursor(cursorForHandle(h));
+          return;
+        }
+      }
+      if (pt.x >= sel.box.x && pt.x <= sel.box.x + sel.box.w && pt.y >= sel.box.y && pt.y <= sel.box.y + sel.box.h) {
+        selDragRef.current = { mode: 'move', start: pt, baseBox: { ...sel.box } }; return;
+      }
     }
     selDragRef.current = { mode: 'lasso' }; selLassoRef.current = [pt]; applySel(null);
   };
   const selectMove = (pt: InkPoint) => {
     const d = selDragRef.current; if (!d) return;
     if (d.mode === 'lasso') { selLassoRef.current?.push(pt); drawLassoPdf(); return; }
-    const dx = pt.x - d.start.x, dy = pt.y - d.start.y;
-    selPreviewRef.current = { dx, dy }; redrawStrokes();
-    setSelection((s) => s ? { ...s, box: { x: d.baseBox.x + dx, y: d.baseBox.y + dy, w: d.baseBox.w, h: d.baseBox.h } } : s);
+    if (d.mode === 'move') {
+      const dx = pt.x - d.start.x, dy = pt.y - d.start.y;
+      selPreviewRef.current = { kind: 'move', dx, dy }; redrawStrokes();
+      setSelection((s) => s ? { ...s, box: { x: d.baseBox.x + dx, y: d.baseBox.y + dy, w: d.baseBox.w, h: d.baseBox.h } } : s);
+      return;
+    }
+    // scale: 반대편 앵커 고정, 잡은 핸들 방향으로. 모서리=비율 유지.
+    const r = computeScale(d.handle, d.baseBox, pt);
+    selPreviewRef.current = { kind: 'scale', ax: r.ax, ay: r.ay, sx: r.sx, sy: r.sy }; redrawStrokes();
+    setSelection((s) => s ? { ...s, box: r.box } : s);
   };
   const selectUp = () => {
     const d = selDragRef.current; selDragRef.current = null; if (!d) return;
@@ -416,7 +487,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
     const sel = selectionRef.current;
     if (!pv || !sel) { redrawStrokes(); return; }
     const m = new Map<PageStroke, PageStroke>();
-    sel.strokes.forEach((st) => m.set(st, pgTranslate(st, pv.dx, pv.dy)));
+    sel.strokes.forEach((st) => m.set(st, pv.kind === 'move' ? pgTranslate(st, pv.dx, pv.dy) : pgScale(st, pv.ax, pv.ay, pv.sx, pv.sy)));
     commit(strokesRef.current.map((st) => m.get(st) ?? st));
     const moved = [...m.values()], box = pgBox(moved);
     applySel(box ? { strokes: moved, box } : null);
@@ -463,7 +534,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
       if (penModeRef.current || touchNavRef.current) return; // 펜모드 손가락/내비 중 → 그리기 안 함
       // 손가락 사용자 1손가락 그리기 → 아래로 진행
     }
-    if (selectMode) { if (selDragRef.current) selectMove(getCoordinatesRatio(e)); return; }
+    if (selectMode) { const rp = getCoordinatesRatio(e); if (selDragRef.current) selectMove(rp); else if (e.pointerType !== 'touch') updateHoverCursor(rp); return; }
     if (!isDrawingRef.current) return;
     const pts = coalescedRatioPoints(e); // 고주사율: 중간 점들까지 전부
     if (gestureRef.current) { for (const p of pts) gestureRef.current.push({ x: p.x, y: p.y }); drawGesturePreviewPdf(); return; }
@@ -566,7 +637,7 @@ const PdfPage: React.FC<PdfPageProps> = ({
         onPointerCancel={stopDraw}
         onPointerLeave={stopDraw}
         className="absolute inset-0 w-full h-full touch-none z-20"
-        style={{ cursor: selectMode ? 'crosshair' : cursorForPen(pen) }}
+        style={{ cursor: selectMode ? selCursor : cursorForPen(pen) }}
       />
 
       {/* 올가미 선택 오버레이 (비율 → %) */}
@@ -574,6 +645,11 @@ const PdfPage: React.FC<PdfPageProps> = ({
         <div className="absolute inset-0 z-30 pointer-events-none">
           <div className="absolute border-2 border-blue-500 border-dashed rounded-sm"
             style={{ left: `${selection.box.x * 100}%`, top: `${selection.box.y * 100}%`, width: `${selection.box.w * 100}%`, height: `${selection.box.h * 100}%` }} />
+          {/* 8방향 크기조절 핸들(시각 단서 — 실제 드래그는 아래 캔버스가 좌표로 감지) */}
+          {Object.entries(handlePos(selection.box)).map(([h, p]) => (
+            <div key={h} className="absolute w-2.5 h-2.5 bg-white border-2 border-blue-500 rounded-sm"
+              style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%, -50%)' }} />
+          ))}
           <div className="absolute flex items-center gap-1 bg-white rounded-lg shadow-lg border border-slate-200 px-1.5 py-1 pointer-events-auto"
             style={{ left: `${selection.box.x * 100}%`, top: `calc(${selection.box.y * 100}% - 42px)` }}>
             <button onClick={duplicateSel} title="복제" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"><Copy className="w-4 h-4" /></button>
