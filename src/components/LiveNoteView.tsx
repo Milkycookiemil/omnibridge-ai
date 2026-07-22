@@ -17,7 +17,7 @@ import { useTranscription } from '../hooks/useTranscription';
 
 import { useSyncEngine, onRemoteStroke } from '../lib/syncEngine';
 import type { InkDelta } from '../lib/inkEngine';
-import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteTypedText, saveNoteTranscript } from '../lib/notesStore';
+import { getNote, saveNoteStrokes, saveNotePdfPages, saveNoteBookmarks, saveNoteTypedText, saveNoteTranscript } from '../lib/notesStore';
 import { downloadPdf, takePdfFile } from '../lib/pdfStore';
 import { pageDims } from '../lib/pageSizes';
 import { buildRecordingStream, NO_SYSTEM_AUDIO } from '../lib/audioCapture';
@@ -49,6 +49,10 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
   const [pdfInitialPages, setPdfInitialPages] = useState<PdfPageStrokes | undefined>(undefined);
   const pdfPagesRef = useRef<PdfPageStrokes | null>(null);
   const pdfSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // PDF 북마크: 저장분 복원 + 최신값 ref(언마운트 flush) + 디바운스 타이머
+  const [pdfInitialBookmarks, setPdfInitialBookmarks] = useState<number[] | undefined>(undefined);
+  const pdfBookmarksRef = useRef<number[] | null>(null);
+  const pdfBmSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // PDF 소스 준비: (1) 방금 고른 파일이 있으면 그걸, (2) 저장된 노트면 Storage에서 다운로드.
   // 저장된 페이지별 필기도 함께 불러와 복원한다.
@@ -65,6 +69,7 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
       if (noteId) {
         const note = await getNote(noteId);
         if (!revoked && note?.pdfPages) setPdfInitialPages(note.pdfPages);
+        if (!revoked && note?.bookmarks) setPdfInitialBookmarks(note.bookmarks);
         // navContext.file이 없을 때(WorkspaceView 라우팅으로 떨어졌거나 대시보드 재열기):
         // ① 방금 고른 파일이 메모리 캐시에 있으면 그걸 즉시 사용(게스트 포함) →
         // ② 없으면 Storage에서 원본 다운로드(로그인 사용자의 재방문)
@@ -124,11 +129,21 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
     pdfSaveTimer.current = setTimeout(() => void saveNotePdfPages(noteId, pages, makePdfThumb()), 1000);
   };
 
-  // 화면을 떠날 때 PDF 필기 마지막 상태 flush
+  // PDF 북마크 변경 → 디바운스 저장 + 최신값 보관(언마운트 flush)
+  const handlePdfBookmarksChange = (bm: number[]) => {
+    pdfBookmarksRef.current = bm;
+    if (!noteId) return;
+    if (pdfBmSaveTimer.current) clearTimeout(pdfBmSaveTimer.current);
+    pdfBmSaveTimer.current = setTimeout(() => void saveNoteBookmarks(noteId, bm), 600);
+  };
+
+  // 화면을 떠날 때 PDF 필기·북마크 마지막 상태 flush
   useEffect(() => {
     return () => {
       if (pdfSaveTimer.current) clearTimeout(pdfSaveTimer.current);
       if (noteId && pdfPagesRef.current) void saveNotePdfPages(noteId, pdfPagesRef.current);
+      if (pdfBmSaveTimer.current) clearTimeout(pdfBmSaveTimer.current);
+      if (noteId && pdfBookmarksRef.current) void saveNoteBookmarks(noteId, pdfBookmarksRef.current);
     };
   }, [noteId]);
 
@@ -575,6 +590,8 @@ export function LiveNoteView({ navContext }: { navContext?: any }) {
            recordSlot={recordButton}
            initialPageStrokes={pdfInitialPages}
            onStrokesChange={handlePdfStrokesChange}
+           initialBookmarks={pdfInitialBookmarks}
+           onBookmarksChange={handlePdfBookmarksChange}
         />
       )}
 

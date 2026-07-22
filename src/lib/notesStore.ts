@@ -30,6 +30,7 @@ export interface NoteMeta {
 export interface Note extends NoteMeta {
   strokes: InkStroke[]; // InkCanvas의 스트로크 모델을 그대로 보관 (pdf/capture는 비어 있음)
   pdfPages?: PdfPageStrokes; // PDF 노트: 페이지별 필기. 원본 파일은 Storage(pdfStore)에 별도 저장.
+  bookmarks?: number[]; // PDF 북마크 페이지(1-based). 무마이그레이션 동기화: pdf_pages jsonb에 __bm으로 임베드.
   typedText?: string; // 노트북 모드 '타이핑 복습' 텍스트. 손필기와 한 노트로 클라우드 동기화.
   transcript?: { time: string; sec: number; text: string }[]; // 녹음 전사(획↔전사 싱크 복원용)
   // ↓ 내부 필드 (소비처는 무시). IndexedDB에만 저장, NoteMeta 반환 시 제외.
@@ -132,27 +133,49 @@ const toRow = (n: Note, uid: string): NoteRow => ({
   updated_at: n.updatedAt,
   deleted: n.deleted ?? false,
   deleted_at: n.deletedAt ?? null,
-  pdf_pages: n.pdfPages ?? null,
+  // 북마크는 pdf_pages jsonb에 __bm으로 함께 실어 마이그레이션 없이 동기화(숫자 키만 소비하는 쪽은 무시).
+  pdf_pages: encodePdfPages(n),
   typed_text: n.typedText ?? null,
   transcript: n.transcript ?? null,
 });
 
-const fromRow = (r: NoteRow): Note => ({
-  id: r.id,
-  user_id: r.user_id,
-  title: r.title,
-  ...decodeStyle(r.style),
-  strokes: (r.strokes as InkStroke[]) ?? [],
-  pdfPages: (r.pdf_pages as PdfPageStrokes) ?? undefined,
-  typedText: r.typed_text ?? undefined,
-  transcript: (r.transcript as Note['transcript']) ?? undefined,
-  thumbnail: r.thumbnail ?? undefined,
-  createdAt: Number(r.created_at),
-  updatedAt: Number(r.updated_at),
-  deleted: Boolean(r.deleted),
-  deletedAt: r.deleted_at != null ? Number(r.deleted_at) : undefined,
-  _dirty: false,
-});
+// pdfPages(+bookmarks) → pdf_pages 컬럼 payload. 둘 다 없으면 null.
+const encodePdfPages = (n: Note): unknown => {
+  const hasBm = Array.isArray(n.bookmarks) && n.bookmarks.length > 0;
+  if (!n.pdfPages && !hasBm) return null;
+  const payload: Record<string, unknown> = { ...(n.pdfPages ?? {}) };
+  if (hasBm) payload.__bm = n.bookmarks;
+  return payload;
+};
+// pdf_pages 컬럼 → { pdfPages, bookmarks } 분리(__bm 제거).
+const decodePdfPages = (raw: unknown): { pdfPages?: PdfPageStrokes; bookmarks?: number[] } => {
+  if (!raw || typeof raw !== 'object') return {};
+  const { __bm, ...pages } = raw as Record<string, unknown>;
+  const bookmarks = Array.isArray(__bm) ? (__bm as number[]) : undefined;
+  const pdfPages = Object.keys(pages).length ? (pages as unknown as PdfPageStrokes) : undefined;
+  return { pdfPages, bookmarks };
+};
+
+const fromRow = (r: NoteRow): Note => {
+  const { pdfPages, bookmarks } = decodePdfPages(r.pdf_pages);
+  return {
+    id: r.id,
+    user_id: r.user_id,
+    title: r.title,
+    ...decodeStyle(r.style),
+    strokes: (r.strokes as InkStroke[]) ?? [],
+    pdfPages,
+    bookmarks,
+    typedText: r.typed_text ?? undefined,
+    transcript: (r.transcript as Note['transcript']) ?? undefined,
+    thumbnail: r.thumbnail ?? undefined,
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+    deleted: Boolean(r.deleted),
+    deletedAt: r.deleted_at != null ? Number(r.deleted_at) : undefined,
+    _dirty: false,
+  };
+};
 
 // 로컬 노트의 _dirty 플래그를 갱신 (업로드 성공/실패 표시).
 async function markDirty(id: string, dirty: boolean): Promise<void> {
@@ -361,6 +384,17 @@ export async function saveNotePdfPages(
   note.pdfPages = pdfPages;
   note.updatedAt = Date.now();
   if (thumbnail) note.thumbnail = thumbnail;
+  note._dirty = true;
+  await run('readwrite', (s) => s.put(note));
+  void pushNote(note);
+}
+
+// PDF 북마크 저장 → 로컬(IndexedDB) + pdf_pages jsonb에 임베드돼 클라우드 동기화(LWW).
+export async function saveNoteBookmarks(id: string, bookmarks: number[]): Promise<void> {
+  const note = await getNote(id);
+  if (!note) return;
+  note.bookmarks = bookmarks;
+  note.updatedAt = Date.now();
   note._dirty = true;
   await run('readwrite', (s) => s.put(note));
   void pushNote(note);

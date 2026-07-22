@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes, Minus, Plus } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, X, Copy, Trash2, Undo2, Redo2, Lasso, Ruler, Shapes, Minus, Plus, Bookmark } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PenToolbar } from '../ink/PenToolbar';
 import { QuickColorPalette } from '../ink/QuickColorPalette';
@@ -691,6 +691,8 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   strokeTime?: () => number | undefined; // P1 녹음 시각 스탬프
   onStrokeTap?: (t: number) => void;     // P1 역방향: 획 탭 → 전사 점프
   recordSlot?: React.ReactNode;          // PDF 헤더에 넣을 녹음 버튼
+  initialBookmarks?: number[];           // 저장된 북마크 페이지 복원용
+  onBookmarksChange?: (bm: number[]) => void; // 북마크 변경 알림(저장용)
 }>(({
   fileUrl,
   pen,
@@ -703,6 +705,8 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
   strokeTime,
   onStrokeTap,
   recordSlot,
+  initialBookmarks,
+  onBookmarksChange,
 }, ref) => {
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -815,6 +819,26 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
     })();
   };
   const closeThumbs = () => { thumbSeqRef.current++; setThumbsOpen(false); };
+
+  // ── 북마크 (다시 볼 페이지 표시 → 빠른 점프) ─────────────────────────
+  const [bookmarks, setBookmarks] = useState<number[]>(initialBookmarks ?? []);
+  const [bmListOpen, setBmListOpen] = useState(false);
+  const bmLoadedRef = useRef(false);
+  // 비동기 로드로 초기 북마크가 나중에 도착하면 1회 반영.
+  useEffect(() => {
+    if (!bmLoadedRef.current && initialBookmarks) {
+      bmLoadedRef.current = true;
+      if (initialBookmarks.length) setBookmarks(initialBookmarks);
+    }
+  }, [initialBookmarks]);
+  const toggleBookmark = (page: number) => {
+    setBookmarks((prev) => {
+      const next = prev.includes(page) ? prev.filter((p) => p !== page) : [...prev, page].sort((a, b) => a - b);
+      onBookmarksChange?.(next);
+      return next;
+    });
+  };
+  const isBookmarked = bookmarks.includes(currentPageNum);
 
   // P1: 전사 라인 클릭 → 모든 페이지에서 그 시각의 획 하이라이트 + 첫 매칭 페이지로 스크롤.
   useImperativeHandle(ref, () => ({
@@ -936,6 +960,37 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
              <button onClick={() => scrollToPage(currentPageNum + 1)} disabled={currentPageNum >= numPages} className="p-1 rounded hover:bg-white disabled:opacity-30 transition-colors" title="다음 페이지"><ChevronRight className="w-4 h-4" /></button>
          </div>
 
+         {/* 북마크: 현재 페이지 토글 + 목록(점프) */}
+         <div className="relative flex items-center gap-0.5">
+            <button onClick={() => toggleBookmark(currentPageNum)} title={isBookmarked ? '이 페이지 북마크 해제' : '이 페이지 북마크'}
+              className={cn('w-9 h-9 flex items-center justify-center rounded-lg transition-colors', isBookmarked ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50')}>
+              <Bookmark className="w-5 h-5" fill={isBookmarked ? 'currentColor' : 'none'} />
+            </button>
+            <button onClick={() => setBmListOpen((v) => !v)} disabled={bookmarks.length === 0} title="북마크 목록"
+              className={cn('h-9 px-2 flex items-center gap-1 rounded-lg text-xs font-bold tabular-nums transition-colors disabled:opacity-40',
+                bmListOpen ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50')}>
+              <Bookmark className="w-3.5 h-3.5" /> {bookmarks.length}
+            </button>
+            {bmListOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setBmListOpen(false)} />
+                <div className="absolute top-full right-0 mt-2 w-44 bg-white rounded-xl border border-slate-200 shadow-xl z-50 py-1 max-h-72 overflow-y-auto">
+                  {bookmarks.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-slate-400">북마크 없음</div>
+                  ) : bookmarks.map((p) => (
+                    <div key={p} className="group flex items-center">
+                      <button onClick={() => { scrollToPage(p); setBmListOpen(false); }}
+                        className={cn('flex-1 flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-slate-50', p === currentPageNum ? 'text-amber-600 font-bold' : 'text-slate-600')}>
+                        <Bookmark className="w-3.5 h-3.5 text-amber-500" fill="currentColor" /> {p} 페이지
+                      </button>
+                      <button onClick={() => toggleBookmark(p)} title="북마크 해제" className="px-2 text-slate-300 hover:text-rose-500"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+         </div>
+
          <div className="flex items-center gap-2 flex-1 max-w-[320px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus-within:ring-2 focus-within:ring-violet-500/20 focus-within:border-violet-500 transition-all">
             <Search className="w-4 h-4 text-slate-400" />
             <input 
@@ -1050,6 +1105,9 @@ export const PdfAdvancedRenderer = forwardRef<PdfRendererHandle, {
                     {thumbs[n]
                       ? <img src={thumbs[n]} alt={`페이지 ${n}`} className="w-full h-full object-contain" draggable={false} />
                       : <div className="w-5 h-5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />}
+                    {bookmarks.includes(n) && (
+                      <span className="absolute top-1 left-1 text-amber-500 drop-shadow"><Bookmark className="w-4 h-4" fill="currentColor" /></span>
+                    )}
                     <span className={cn('absolute bottom-1 right-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full',
                       n === currentPageNum ? 'bg-violet-500 text-white' : 'bg-white/80 text-slate-500')}>{n}</span>
                   </button>
